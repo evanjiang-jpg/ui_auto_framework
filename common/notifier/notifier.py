@@ -12,6 +12,7 @@ from common.logger import get_logger
 from common.notifier.models import TestResult
 from common.notifier.channels.dingtalk import send_dingtalk
 from common.notifier.channels.email import send_email
+from common.notifier.channels.feishu import send_feishu
 
 logger = get_logger("notifier")
 
@@ -37,6 +38,7 @@ class TestNotifier:
 
     def __init__(self):
         self.ding_enabled = _to_bool("DINGTALK_ENABLED", fallback_key="DINGTALK_WEBHOOK")
+        self.feishu_enabled = _to_bool("FEISHU_ENABLED", fallback_key="FEISHU_WEBHOOK")
         self.email_enabled = _to_bool("EMAIL_ENABLED", fallback_key="EMAIL_PASSWORD")
 
         self.ding_cfg = {
@@ -44,6 +46,12 @@ class TestNotifier:
             "secret": os.getenv("DINGTALK_SECRET", ""),
             "at_mobiles": _split_env("DINGTALK_AT_MOBILES"),
             "at_all": _to_bool("DINGTALK_AT_ALL"),
+        }
+        self.feishu_cfg = {
+            "webhook": os.getenv("FEISHU_WEBHOOK", ""),
+            "secret": os.getenv("FEISHU_SECRET", ""),
+            "at_emails": _split_env("FEISHU_AT_EMAILS"),
+            "at_all": _to_bool("FEISHU_AT_ALL"),
         }
         self.email_cfg = {
             "host": os.getenv("EMAIL_SMTP_HOST", ""),
@@ -66,6 +74,13 @@ class TestNotifier:
             except Exception as e:
                 logger.error(f"钉钉通知异常: {e}")
                 results["dingtalk"] = False
+
+        if self.feishu_enabled:
+            try:
+                results["feishu"] = send_feishu(result, **self.feishu_cfg)
+            except Exception as e:
+                logger.error(f"飞书通知异常: {e}")
+                results["feishu"] = False
 
         if self.email_enabled:
             try:
