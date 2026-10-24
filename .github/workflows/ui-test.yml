@@ -10,10 +10,26 @@ name: UI 自动化测试
 on:
   push:
     branches: [main, master]
+    paths:
+      - '**/*.py'
+      - '**/*.yaml'
+      - '**/*.yml'
+      - 'requirements.txt'
+      - 'config/**'
+      - '!docs/**'
+      - '!README.md'
   pull_request:
     branches: [main, master]
+    paths:
+      - '**/*.py'
+      - '**/*.yaml'
+      - '**/*.yml'
+      - 'requirements.txt'
+      - 'config/**'
+      - '!docs/**'
+      - '!README.md'
   schedule:
-    - cron: '0 18 * * *'        # 每天 UTC 18:00（北京时间 02:00）跑全量回归
+    - cron: '0 18 * * *'
   workflow_dispatch:
     inputs:
       scope:
