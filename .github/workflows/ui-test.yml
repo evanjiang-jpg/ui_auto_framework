@@ -10,7 +10,7 @@
 #   deploy-test → SSH 到测试机部署（对标京东 BOE 持续交付）
 #   notify   → 等所有 CD 完成后发通知
 # ─────────────────────────────────────────────────────────
-# 需要配的 Secrets（Settings → Secrets → Actions）：
+# 需要配 Secrets（Settings → Secrets → Actions）：
 #   测试通知：DINGTALK_WEBHOOK / FEISHU_WEBHOOK / EMAIL_*
 #   CD 部署： DEPLOY_HOST / DEPLOY_USER / DEPLOY_SSH_KEY / DEPLOY_PATH
 #   镜像推送：不需要（用 GITHUB_TOKEN 自动认证 GHCR）
