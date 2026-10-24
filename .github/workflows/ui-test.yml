@@ -160,7 +160,7 @@ jobs:
   image:
     name: ② CD 构建 Docker 镜像
     needs: ui-test
-    if: always() && github.event_name != 'pull_request'
+    if: always() && github.event_name != 'pull_request' && needs.ui-test.result != 'cancelled'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -211,14 +211,15 @@ jobs:
       always() &&
       github.event_name != 'pull_request' &&
       github.repository == 'evanjiang-jpg/ui_auto_framework' &&
-      (github.event_name != 'workflow_dispatch' || github.event.inputs.deploy_enabled == 'true') &&
-      secrets.DEPLOY_HOST != ''
+      (github.event_name != 'workflow_dispatch' || github.event.inputs.deploy_enabled == 'true')
     runs-on: ubuntu-latest
     environment: test
     timeout-minutes: 10
 
     steps:
       - name: SSH 部署
+        if: ${{ secrets.DEPLOY_HOST != '' }}
+        continue-on-error: true
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.DEPLOY_HOST }}
