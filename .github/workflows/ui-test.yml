@@ -1,11 +1,21 @@
 # ==============================================================
-# GitHub Actions 工作流
+# GitHub Actions 工作流 — UI 自动化测试完整 CI/CD
 #
-# 触发方式：push(main) / pull_request / 打 tag / 手动 / 每日定时
-# 使用前在仓库 Settings > Secrets and variables > Actions 配置：
-#   DINGTALK_WEBHOOK / DINGTALK_SECRET / FEISHU_WEBHOOK 等
+# 触发：push(main/master) / PR / 每日定时 / 手动
+# ─────────────────────────────────────────────────────────
+# CI 阶段：
+#   ui-test  → 跑测试、生成 Allure、部署 Pages、上传产物
+# CD 阶段：
+#   image    → Docker build 推 GHCR（对标京东 JDOS 制品库）
+#   deploy-test → SSH 到测试机部署（对标京东 BOE 持续交付）
+#   notify   → 等所有 CD 完成后发通知
+# ─────────────────────────────────────────────────────────
+# 需要配的 Secrets（Settings → Secrets → Actions）：
+#   测试通知：DINGTALK_WEBHOOK / FEISHU_WEBHOOK / EMAIL_*
+#   CD 部署： DEPLOY_HOST / DEPLOY_USER / DEPLOY_SSH_KEY / DEPLOY_PATH
+#   镜像推送：不需要（用 GITHUB_TOKEN 自动认证 GHCR）
 # ==============================================================
-name: UI 自动化测试框架封装
+name: UI 自动化测试框架 — CI/CD
 
 on:
   push:
@@ -15,6 +25,8 @@ on:
       - '**/*.yaml'
       - '**/*.yml'
       - 'requirements.txt'
+      - 'Dockerfile'
+      - 'docker-compose.yml'
       - 'config/**'
       - '!docs/**'
       - '!README.md'
@@ -25,6 +37,8 @@ on:
       - '**/*.yaml'
       - '**/*.yml'
       - 'requirements.txt'
+      - 'Dockerfile'
+      - 'docker-compose.yml'
       - 'config/**'
       - '!docs/**'
       - '!README.md'
@@ -37,13 +51,23 @@ on:
         required: false
         default: 'p0 or p1'
         type: string
+      deploy_enabled:
+        description: '是否执行 CD 部署（默认 true，手动触发时可关掉）'
+        required: false
+        default: 'true'
+        type: string
 
 env:
   ENV: test
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  # ============================================================
+  # ① CI — 跑测试、生成报告、部署 Pages
+  # ============================================================
   ui-test:
-    name: 执行 UI 自动化测试
+    name: ① CI 执行测试
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -95,16 +119,19 @@ jobs:
 
       - name: 上传 Allure 报告到 GitHub Pages
         if: always()
+        continue-on-error: true
         uses: actions/upload-pages-artifact@v3
         with:
           path: allure-report
 
       - name: 部署 GitHub Pages
         if: always()
+        continue-on-error: true
         uses: actions/deploy-pages@v4
 
       - name: 上传测试产物
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: ui-test-artifacts
@@ -116,6 +143,7 @@ jobs:
             allure-report/
 
       - name: 汇总结果
+        if: always()
         run: |
           echo "执行结论：${{ steps.run.outcome }}"
           if [ "${{ steps.run.outcome }}" != "success" ]; then
@@ -124,11 +152,101 @@ jobs:
           fi
           echo "全部用例通过"
 
-  notify:
-    name: 发送通知（等 Pages 部署完）
+  # ============================================================
+  # ② CD — Docker 镜像推 GHCR（对标京东 JDOS 制品库）
+  #     让别人能 docker pull ghcr.io/evanjiang-jpg/ui_auto_framework
+  # ============================================================
+  image:
+    name: ② CD 构建 Docker 镜像
     needs: ui-test
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 登录 GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 从 Git 历史提取 Docker 元数据（tag / label）
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: 构建并推送到 GHCR
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ============================================================
+  # ③ CD — SSH 部署到测试环境（对标京东 BOE 持续交付）
+  #     需要配 Secrets: DEPLOY_HOST / DEPLOY_USER / DEPLOY_SSH_KEY / DEPLOY_PATH
+  #     有环境审批：仓库 Settings → Environments → 新建 test，加 Required reviewers
+  # ============================================================
+  deploy-test:
+    name: ③ CD 部署测试环境
+    needs: image
+    if: |
+      github.event_name != 'pull_request' &&
+      github.repository == 'evanjiang-jpg/ui_auto_framework' &&
+      (github.event_name != 'workflow_dispatch' || github.event.inputs.deploy_enabled == 'true') &&
+      secrets.DEPLOY_HOST != ''
+    runs-on: ubuntu-latest
+    environment:
+      name: test
+      url: ${{ secrets.DEPLOY_URL }}
+    timeout-minutes: 10
+
+    steps:
+      - name: SSH 部署
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          port: ${{ secrets.DEPLOY_PORT || 22 }}
+          script: |
+            set -e
+            cd ${{ secrets.DEPLOY_PATH }}
+            echo "=== 拉取最新代码 ==="
+            git pull --ff-only origin main
+            echo "=== 拉取最新 Docker 镜像 ==="
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            echo "=== 重启容器 ==="
+            docker compose up -d --remove-orphans
+            echo "=== 清理旧镜像 ==="
+            docker image prune -f
+            echo "=== 查看运行状态 ==="
+            docker compose ps
+
+  # ============================================================
+  # ④ 发送通知（等所有 CD 完成）
+  # ============================================================
+  notify:
+    name: ④ 发送飞书/钉钉/邮件通知
+    needs: [ui-test, image, deploy-test]
     if: always()
+    runs-on: ubuntu-latest
     env:
       DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
       DINGTALK_SECRET: ${{ secrets.DINGTALK_SECRET }}
