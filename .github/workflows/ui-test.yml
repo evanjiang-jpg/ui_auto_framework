@@ -4,6 +4,7 @@
 # 触发方式：push(main) / pull_request / 打 tag / 手动 / 每日定时
 # 使用前在仓库 Settings > Secrets and variables > Actions 配置：
 #   DINGTALK_WEBHOOK / DINGTALK_SECRET / EMAIL_PASSWORD 等
+# 🔒  加密存储，运行时也不会被日志泄露	📝 明文存储，日志里可以看到
 # ==============================================================
 name: UI 自动化测试
 
