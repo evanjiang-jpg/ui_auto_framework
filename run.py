@@ -80,6 +80,8 @@ def build_parser() -> argparse.ArgumentParser:
                               help="执行前清理历史结果与报告")
     group_report.add_argument("--notify", action="store_true",
                               help="执行后发送钉钉/邮件通知")
+    group_report.add_argument("--notify-only", action="store_true",
+                              help="不跑测试，直接读取 allure-results 发通知（CI 拆 job 用）")
 
     # ---------- 辅助 ----------
     group_help = parser.add_argument_group("辅助")
@@ -223,6 +225,23 @@ def main() -> None:
         return
     if args.list_markers:
         list_markers()
+        return
+
+    if args.notify_only:
+        if args.env:
+            os.environ["ENV"] = args.env
+        from common.logger import logger
+        results_dir = args.results_dir
+        if not os.path.isdir(results_dir):
+            print(f"❌ 找不到 {results_dir}，无法发送通知")
+            sys.exit(1)
+        print(f"[notify-only] 读取 {results_dir} 并发送通知...")
+        try:
+            send_notification(results_dir, None)
+        except Exception as e:
+            logger.error(f"通知发送失败: {e}")
+            sys.exit(1)
+        print("✅ 通知发送完成")
         return
 
     # 先设置环境变量，保证后续导入的配置读到正确环境

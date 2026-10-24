@@ -163,7 +163,4 @@ jobs:
       - name: 发送通知
         run: |
           cp -r artifacts/allure-results ./allure-results
-          python -c "
-            from run import send_notification
-            send_notification('allure-results', None)
-          "
+          python run.py --notify-only
