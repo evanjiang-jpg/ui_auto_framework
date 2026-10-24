@@ -68,20 +68,6 @@ jobs:
       - name: 执行测试
         id: run
         continue-on-error: true
-        env:
-          DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
-          DINGTALK_SECRET: ${{ secrets.DINGTALK_SECRET }}
-          FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
-          FEISHU_SECRET: ${{ secrets.FEISHU_SECRET }}
-          EMAIL_SMTP_HOST: ${{ secrets.EMAIL_SMTP_HOST }}
-          EMAIL_USER: ${{ secrets.EMAIL_USER }}
-          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
-          EMAIL_RECEIVERS: ${{ secrets.EMAIL_RECEIVERS }}
-          CI_PIPELINE_ID: ${{ github.run_id }}
-          CI_COMMIT_AUTHOR: ${{ github.actor }}
-          CI_COMMIT_MSG: ${{ github.event.head_commit.message }}
-          CI_BUILD_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          ALLURE_REPORT_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             SCOPE="smoke"
@@ -89,7 +75,7 @@ jobs:
             SCOPE="${{ github.event.inputs.scope || 'p0 or p1' }}"
           fi
           echo "执行范围: $SCOPE"
-          python run.py -m "$SCOPE" -n 4 --reruns 2 --reruns-delay 1 --no-report --notify
+          python run.py -m "$SCOPE" -n 4 --reruns 2 --reruns-delay 1 --no-report
 
       - name: 上传 Allure 报告到 GitHub Pages
         if: always()
@@ -121,3 +107,47 @@ jobs:
             exit 1
           fi
           echo "全部用例通过"
+
+  notify:
+    name: 发送通知（等 Pages 部署完）
+    needs: ui-test
+    runs-on: ubuntu-latest
+    if: always()
+    env:
+      DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
+      DINGTALK_SECRET: ${{ secrets.DINGTALK_SECRET }}
+      FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
+      FEISHU_SECRET: ${{ secrets.FEISHU_SECRET }}
+      EMAIL_SMTP_HOST: ${{ secrets.EMAIL_SMTP_HOST }}
+      EMAIL_USER: ${{ secrets.EMAIL_USER }}
+      EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+      EMAIL_RECEIVERS: ${{ secrets.EMAIL_RECEIVERS }}
+      CI_PIPELINE_ID: ${{ github.run_id }}
+      CI_COMMIT_AUTHOR: ${{ github.actor }}
+      CI_COMMIT_MSG: ${{ github.event.head_commit.message }}
+      CI_BUILD_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      ALLURE_REPORT_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: 安装依赖
+        run: pip install -r requirements.txt
+
+      - name: 下载 Allure 原始结果
+        uses: actions/download-artifact@v4
+        with:
+          name: ui-test-artifacts
+          path: artifacts
+
+      - name: 发送通知
+        run: |
+          cp -r artifacts/allure-results ./allure-results
+          python -c "
+            from run import send_notification
+            send_notification('allure-results', None)
+          "
