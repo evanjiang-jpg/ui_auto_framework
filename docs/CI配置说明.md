@@ -114,7 +114,162 @@ Invoke-RestMethod -Uri "你的DINGTALK_WEBHOOK值" -Method Post -ContentType "ap
 
 ---
 
-## 五、CI 内置变量（不需要手动配置）
+## 五、飞书通知（可选）
+
+### 5.1 需要配置的 Secrets
+
+| Secret Name | 必填 | 取值 | 说明 |
+|-------------|------|------|------|
+| `FEISHU_WEBHOOK` | ✅ 启用后必填 | `https://open.feishu.cn/open-apis/bot/v2/hook/xxxxxxxxxx` | 飞书自定义机器人的 webhook 地址 |
+| `FEISHU_SECRET` | ⚠️ 条件必填 | `xxxxxxxxxxxxxxxxxxxxxxxxxx` | 机器人安全设置选"加签"时必填；用"自定义关键词"方式则不需要 |
+| `FEISHU_AT_EMAILS` | 否 | `a@example.com,b@example.com` | 需要 @ 的飞书用户邮箱，多个用英文逗号分隔 |
+| `FEISHU_AT_ALL` | 否 | `true` | 是否 @所有人 |
+
+> 💡 **不需要手动配 `FEISHU_ENABLED`**。代码自动推断：有 `FEISHU_WEBHOOK` 值就自动开启。
+
+### 5.2 飞书机器人创建步骤
+
+```
+① 打开一个飞书群（测试专用，别用工作群）
+② 群设置 → 群机器人 → 添加机器人 → 自定义机器人
+③ 机器人名字填：自动化测试（或随你喜欢）
+④ 安全设置（三选一，推荐前两种）：
+
+   方式 A：自定义关键词（最简单，推荐）
+     → 关键词填：自动化测试
+     → 不需要配 FEISHU_SECRET
+
+   方式 B：加签（更安全）
+     → 安全设置选 "加签"
+     → 记录下密钥（一串随机字符串）
+     → 密钥填到 GitHub Secret FEISHU_SECRET
+
+   方式 C：IP 白名单
+     → GitHub Actions 出口 IP 经常变，不推荐
+
+⑤ 创建完成后复制 webhook 地址
+⑥ 把 webhook 地址填到 GitHub Secret FEISHU_WEBHOOK
+```
+
+### 5.3 手动测试 webhook 通不通（可选）
+
+PowerShell 里直接调用：
+
+```powershell
+$body = @{
+    msg_type = "text"
+    content = @{ text = "自动化测试 手动测试消息" }
+} | ConvertTo-Json -Depth 3
+
+Invoke-RestMethod -Uri "你的FEISHU_WEBHOOK值" -Method Post -ContentType "application/json; charset=utf-8" -Body ([System.Text.Encoding]::UTF8.GetBytes($body))
+```
+
+返回 `{"StatusCode":0,"StatusMessage":"success"}` 或飞书群里收到消息 → webhook 没问题。
+
+### 5.4 飞书卡片消息效果
+
+```
+┌─────────────────────────────────────────────┐
+│ ✅ UI自动化测试执行报告            [绿色/红色]│  ← header（成功绿/失败红）
+│ 全部通过 ｜ 环境 TEST ｜ 2026-10-24 10:48    │  ← 副标题 + 分割线
+├─────────────────────────────────────────────┤
+│ ┌────┬────┬────┬────┬────┐                  │
+│ │总数│通过│失败│异常│跳过│                  │
+│ │ 17 │ 17 │ 0  │ 0  │ 0  │  ← 5 个大数字并排│
+│ └────┴────┴────┴────┴────┘                  │
+│                                             │
+│ 通过率: 100% ｜ 总耗时: 12.3s               │
+│                                             │
+│ [📊 查看完整 Allure 报告]  [🔗 查看流水线]  │  ← 两个按钮
+│                                             │
+│ 失败用例：                                   │  ← 有失败才显示
+│ - test_login: 元素找不到登录按钮             │
+│                                             │
+│ 流水线 #40087327052 ｜ 提交人: evanjiang-jpg│  ← 底部注脚
+│ feat: add feishu notifier...                │
+└─────────────────────────────────────────────┘
+```
+
+---
+
+## 六、Allure 报告与 GitHub Pages（可选但推荐）
+
+### 6.1 效果
+
+CI 跑完后自动生成 Allure HTML 报告，部署到 GitHub Pages：
+
+```
+通知里的按钮点击 → https://evanjiang-jpg.github.io/ui_auto_framework/
+                                 ↑
+                           这里直接能看 Allure 报告
+（包含图表、用例详情、失败截图、重试历史等）
+```
+
+### 6.2 前提条件
+
+| 条件 | 状态 |
+|------|------|
+| 仓库是 **Public** | ✅ 免费，直接用 |
+| 仓库是 **Private** | ✅ 现在也免费了（GitHub Free 已支持） |
+| 不需要买域名 | ✅ 用 GitHub 默认的 `xxx.github.io/仓库名` 就行 |
+
+### 6.3 开启 GitHub Pages（一次性操作）
+
+```
+① 仓库页面 → Settings（不是 Settings → Secrets，是仓库本身的 Settings）
+② 左栏往下拉找到 "Pages"
+③ Source 下拉框 → 选 "GitHub Actions"   ← 关键！
+④ 下面的 Custom domain → 留空！什么都别填
+⑤ Enforce HTTPS → 默认勾上，不用改
+⑥ 点 Save
+```
+
+> ⚠️ Custom domain 框**不要填**！那是给"我买了域名想绑上去"用的。留空就行。
+
+### 6.4 工作原理
+
+```
+┌─ ui-test job ─────────────────────────────────────────┐
+│  1. 装 Java（temurin 17）                              │
+│  2. 装 allure-commandline（npm 全局装）                │
+│  3. 跑 pytest → 生成 allure-results/（原始数据）        │
+│  4. allure generate → 生成 allure-report/（静态 HTML）  │
+│  5. upload-pages-artifact → 上传 allure-report 给 Pages│
+│  6. deploy-pages → 部署到 evanjiang-jpg.github.io/...  │
+│  7. upload-artifact → 把 allure-results 和 allure-report 存 30 天 │
+└────────────────────────┬───────────────────────────────┘
+                         │ needs: ui-test
+                         ▼
+┌─ notify job ──────────────────────────────────────────┐
+│  8. download-artifact → 取回 allure-results            │
+│  9. 发通知（此时 Pages 已经部署好了）                    │
+│     → report_url = https://evanjiang-jpg.github.io/... │
+│     → 通知里的 "📊 查看完整 Allure 报告" 按钮可直接点击 │
+└────────────────────────────────────────────────────────┘
+```
+
+### 6.5 为什么拆成两个 job？
+
+通知**必须在 Pages 部署完成之后**发送。如果在同一个 job 里先 `run.py --notify` 再 deploy-pages，用户点按钮时 Pages 还没上线 → 404。
+
+拆 job + `needs: ui-test` 保证时序：
+
+```
+ui-test job 完了 → Pages 部署上线 → notify job 才开始 → 发通知 → 用户点按钮 → Pages 已上线 ✅
+```
+
+### 6.6 常见问题
+
+| 问题 | 原因 | 解决 |
+|------|------|------|
+| 点 Allure 按钮报 404 | 没开 Pages | Settings → Pages → Source 选 GitHub Actions |
+| 点 Allure 按钮跳流水线 | 旧版本 workflow 的 fallback bug | 已修复，push 最新 workflow 即可 |
+| Pages 首次部署慢 | GitHub Pages 首次部署需要几分钟 | 等一次，后面就快了 |
+| deploy-pages step 失败 | 没有 pages: write 权限 | workflow job 级别加 `permissions: { pages: write, id-token: write }` |
+
+---
+
+## 七、CI 内置变量（不需要手动配置）
 
 workflow 文件 `.github/workflows/ui-test.yml` 里有一些变量**GitHub 自动注入**，你不用管：
 
@@ -124,24 +279,28 @@ workflow 文件 `.github/workflows/ui-test.yml` 里有一些变量**GitHub 自�
 | `CI_COMMIT_AUTHOR` | `${{ github.actor }}` | 触发者的 GitHub 用户名 |
 | `CI_COMMIT_MSG` | `${{ github.event.head_commit.message }}` | 本次 commit 的 message |
 | `CI_BUILD_URL` | `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}` | 流水线运行结果页面链接 |
+| `ALLURE_REPORT_URL` | `https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/` | 自动拼接的 GitHub Pages Allure 报告地址 |
 
-通知模板里会用到这些，让接收通知的人能点进流水线页面看详情。
+通知模板里会用到这些，让接收通知的人能点进流水线页面或 Allure 报告看详情。
 
 ---
 
-## 六、完整配置检查清单
+## 八、完整配置检查清单
 
 配完 Secrets 后确认列表：
 
-- [ ] `DINGTALK_ENABLED` = `true`
-- [ ] `DINGTALK_WEBHOOK` = 钉钉机器人 webhook 地址
-- [ ] `DINGTALK_SECRET`（如果用加签方式）
-- [ ] `EMAIL_ENABLED` = `false`（先关掉，需要时再开）
+- [ ] 钉钉：`DINGTALK_WEBHOOK`（可选）
 - [ ] 钉钉机器人关键词已配置 "自动化测试"
+- [ ] 飞书：`FEISHU_WEBHOOK`（可选）
+- [ ] 飞书机器人关键词已配置 "自动化测试"
+- [ ] 邮件：`EMAIL_*` 全套（可选，默认关）
+- [ ] GitHub Pages 已开启：Settings → Pages → Source = GitHub Actions
+
+> 💡 **最简配置**：只配飞书（或钉钉）的 webhook 一个值，其他代码自动推断。
 
 ---
 
-## 七、本地 .env 快速配置（开发调试用）
+## 九、本地 .env 快速配置（开发调试用）
 
 CI 上的配置是 GitHub Secrets，本地跑测试用 `config/.env`：
 
@@ -156,9 +315,14 @@ Copy-Item config\.env.example config\.env
 
 ```
 # ---------- 钉钉 ----------
-DINGTALK_ENABLED=true
 DINGTALK_WEBHOOK=https://oapi.dingtalk.com/robot/send?access_token=你的token
 DINGTALK_SECRET=
+
+# ---------- 飞书 ----------
+FEISHU_WEBHOOK=https://open.feishu.cn/open-apis/bot/v2/hook/你的token
+FEISHU_SECRET=
+FEISHU_AT_EMAILS=
+FEISHU_AT_ALL=
 
 # ---------- 邮件 ----------
 EMAIL_ENABLED=false
@@ -176,21 +340,22 @@ CI_PIPELINE_ID=
 CI_COMMIT_AUTHOR=
 CI_COMMIT_MSG=
 CI_BUILD_URL=
+ALLURE_REPORT_URL=
 ```
 
 > ⚠️ `.env` 文件在 `.gitignore` 里，**不会被提交到 Git**，放心填真实值。
 
 ---
 
-## 八、触发 CI 并验证
+## 十、触发 CI 并验证
 
 ### 方式 A：手动触发（推荐，不用改代码）
 
 ```
 仓库页面 → Actions → 左栏 "UI 自动化测试" → 右栏 "Run workflow" 下拉按钮
 → 输入执行范围（默认 p0 or p1）→ 点绿色 "Run workflow"
-→ 等跑完（测试用无头浏览器，大概 1-2 分钟）
-→ Actions 页面能看到日志，钉钉/邮箱应该能收到通知
+→ 等跑完（测试用无头浏览器，大概 2-3 分钟，含 Pages 部署）
+→ 通知里的 "📊 查看完整 Allure 报告" 按钮点击可访问
 ```
 
 ### 方式 B：push 触发
@@ -204,9 +369,9 @@ git push
 
 ---
 
-## 九、通知没收到？排查清单
+## 十一、通知没收到？排查清单
 
-### 9.1 CI 有没有跑？
+### 11.1 CI 有没有跑？
 
 打开 Actions 页面看最新记录：
 👉 https://github.com/evanjiang-jpg/ui_auto_framework/actions
@@ -215,45 +380,58 @@ git push
 
 **有记录但红色失败** → 点开看日志，先解决测试本身的问题。
 
-### 9.2 日志里有没有通知相关输出？
+### 11.2 通知走的是 notify job
 
-点开 "执行测试" step，滚到底部：
+现在通知拆到了独立的 `notify` job 里，**不要在 ui-test job 里找通知日志**。正确位置：
+
+```
+Actions 页面 → 点最新运行 → 左边红/绿的 notify job → 右边展开看日志
+```
 
 | 看到 | 含义 |
 |------|------|
-| `未启用任何通知通道，跳过通知` | `DINGTALK_ENABLED` 或 `EMAIL_ENABLED` 没设为 `true` |
-| `钉钉通知已发送` 但群里没收到 | 钉钉机器人关键词/加签没配对 |
-| `钉钉通知异常: xxx` | webhook 地址不对，或钉钉返回了错误码 |
-| 根本没看到通知相关输出 | workflow 里没传 `--notify`，或者通知 try-except 被静默吞了 |
+| `未启用任何通知通道，跳过通知` | webhook Secret 没配或配错 |
+| `飞书通知发送成功` | ✅ 发成功了，查飞书群 |
+| `飞书通知发送失败: {...}` | webhook 格式错或关键词没配对 |
 
-### 9.3 钉钉机器人关键词
+### 11.3 关键词没配
 
-通知模板第一行是：
+通知里第一行一定包含 **"自动化测试"**：
+- 钉钉机器人关键词要配 **"自动化测试"**
+- 飞书机器人关键词要配 **"自动化测试"**
 
-```
-## ✅/❌ UI自动化测试执行通知
-```
+没配关键词 → webhook 发出去平台**静默拒绝** → 收不到消息。
 
-钉钉机器人关键词必须命中 **"自动化测试"** 或 **"UI"** 或 **"测试执行"**。没配关键词 → webhook 发出去钉钉静默拒绝 → 收不到。
-
-### 9.4 Secret 值有没有空格？
+### 11.4 Secret 值有没有空格？
 
 复制粘贴 webhook 地址时容易带上前后空格。确保 Secret 的值**前后没有多余空格和换行**。
 
-### 9.5 `_to_bool` 的坑
+### 11.5 三个通道独立开启
 
-Python 的 `_to_bool` 只认**小写** `"true"`：
+有 webhook 就自动开，三个通道互不干扰：
 
-```python
-def _to_bool(name: str, default: bool = False) -> bool:
-    return (os.getenv(name, str(default)).lower() == "true")
-```
+| 配置了 | 效果 |
+|--------|------|
+| `DINGTALK_WEBHOOK` | 钉钉自动开 |
+| `FEISHU_WEBHOOK` | 飞书自动开 |
+| `EMAIL_PASSWORD` | 邮件自动开 |
+| 多个都配了 | 每个通道各发一条 |
 
-`"TRUE"`、`"True"`、`"1"` 都会返回 `False`。GitHub Secret 里直接填小写 `true`。
+### 11.6 飞书 webhook 要不要加签？
+
+飞书机器人安全设置**三选一**：
+
+| 方式 | 是否要配 FEISHU_SECRET |
+|------|----------------------|
+| 自定义关键词 | ❌ 不用配 |
+| 加签 | ✅ 必须配 |
+| IP 白名单 | ❌ 不用配（但不推荐） |
+
+代码里如果 `FEISHU_SECRET` 为空就走无签发送，有值就自动走加签算法。
 
 ---
 
-## 十、常见问题 FAQ
+## 十二、常见问题 FAQ
 
 ### Q: 修改 Secrets 后需要重新 push 吗？
 
@@ -265,7 +443,7 @@ GitHub 会自动把 Secrets 打码（显示为 `***`），这是正常的，防�
 
 ### Q: 想加新的 Secrets，需要改代码吗？
 
-**不需要**。只要 Secret 名和 `.env.example` / `notifier.py` 里的 `os.getenv()` 一致，代码自动能读到。
+**不需要**。只要 Secret 名和 `config/.env.example` / `notifier.py` 里的 `os.getenv()` 一致，代码自动能读到。
 
 ### Q: 多个仓库都想用同一套通知 Secrets？
 
@@ -274,3 +452,11 @@ GitHub 会自动把 Secrets 打码（显示为 `***`），这是正常的，防�
 ### Q: 本地跑用 `python run.py --notify` 也能发通知吗？
 
 **能**。只要 `config/.env` 里配了对应的值，本地一样会走通知流程。开发调试时可以用自己的测试机器人验证。
+
+### Q: CI 上 Java 和 allure 安装慢？
+
+第一次跑会下载 temurin 17 + npm 包，之后 GitHub Actions 有缓存（setup-python 配了 cache: pip），会快很多。Java 和 npm allure 目前没缓存，每次跑都得装，这是 GitHub Actions 的 tradeoff。
+
+### Q: 通知里的 Allure 报告按钮跳 404？
+
+99% 是 GitHub Pages 没开：Settings → Pages → Source 选 GitHub Actions → Save。等一次 CI 跑完部署成功后再点。
