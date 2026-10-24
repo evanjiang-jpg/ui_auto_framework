@@ -198,7 +198,7 @@ def send_notification(results_dir: str, report_path: str) -> None:
 
     result = parse_allure_results(results_dir)
     result.env = config.current_env
-    result.report_url = os.getenv("CI_BUILD_URL", "") or (report_path or "")
+    result.report_url = os.getenv("ALLURE_REPORT_URL", "") or (report_path or "")
     result.commit_author = os.getenv("CI_COMMIT_AUTHOR", "")
     result.commit_msg = os.getenv("CI_COMMIT_MSG", "")
     result.pipeline_id = os.getenv("CI_PIPELINE_ID", "")
@@ -262,17 +262,20 @@ def main() -> None:
 
     # ---------- 报告 ----------
     report_path = None
-    if not args.no_report:
-        print("\n生成 Allure 报告...")
-        report_path = generate_report(results_dir, report_dir)
-        if report_path:
-            print(f"  ✅ 静态报告已生成: {report_path}")
-            print("\n启动 Allure 报告服务（allure serve）...")
-            serve_report(results_dir)
-            print("\n如需直接打开静态报告：")
-            print(f"  python -m http.server 8080 --directory {os.path.abspath(report_dir)}")
+    print("\n生成 Allure 报告...")
+    report_path = generate_report(results_dir, report_dir)
+    if report_path:
+        print(f"  ✅ 静态报告已生成: {report_path}")
     else:
-        print("\n[CI 模式] 已跳过 HTML 报告生成与打开")
+        print("  ℹ️ 未生成静态报告（allure 命令不可用或生成失败）")
+
+    if not args.no_report and report_path:
+        print("\n启动 Allure 报告服务（allure serve）...")
+        serve_report(results_dir)
+        print("\n如需直接打开静态报告：")
+        print(f"  python -m http.server 8080 --directory {os.path.abspath(report_dir)}")
+    elif args.no_report:
+        print("\n[CI 模式] 跳过本地报告服务启动")
 
     # ---------- 通知 ----------
     if args.notify:

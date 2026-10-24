@@ -47,6 +47,17 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: 安装 Java（Allure 依赖）
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: 安装 Allure Commandline
+        run: |
+          npm install -g allure-commandline --save-dev
+          allure --version
+
       - name: 查看可用环境与标签
         run: |
           python run.py --list-envs
@@ -68,6 +79,7 @@ jobs:
           CI_COMMIT_AUTHOR: ${{ github.actor }}
           CI_COMMIT_MSG: ${{ github.event.head_commit.message }}
           CI_BUILD_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ALLURE_REPORT_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
         run: |
           # 分层策略：PR 只跑冒烟；手动/定时跑高优或指定范围
           if [ "${{ github.event_name }}" = "pull_request" ]; then
@@ -77,6 +89,20 @@ jobs:
           fi
           echo "执行范围: $SCOPE"
           python run.py -m "$SCOPE" -n 4 --reruns 2 --reruns-delay 1 --no-report --notify
+
+      - name: 上传 Allure 报告到 GitHub Pages
+        if: always()
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: allure-report
+
+      - name: 部署 GitHub Pages
+        if: always()
+        needs: run
+        permissions:
+          pages: write
+          id-token: write
+        uses: actions/deploy-pages@v4
 
       - name: 上传测试产物
         if: always()
@@ -88,6 +114,7 @@ jobs:
             logs/
             screenshots/
             allure-results/
+            allure-report/
 
       - name: 汇总结果
         run: |
