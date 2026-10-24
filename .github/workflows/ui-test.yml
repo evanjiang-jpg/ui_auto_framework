@@ -144,6 +144,7 @@ jobs:
 
       - name: 汇总结果
         if: always()
+        continue-on-error: true
         run: |
           echo "执行结论：${{ steps.run.outcome }}"
           if [ "${{ steps.run.outcome }}" != "success" ]; then
@@ -159,7 +160,7 @@ jobs:
   image:
     name: ② CD 构建 Docker 镜像
     needs: ui-test
-    if: github.event_name != 'pull_request'
+    if: always() && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -207,14 +208,13 @@ jobs:
     name: ③ CD 部署测试环境
     needs: image
     if: |
+      always() &&
       github.event_name != 'pull_request' &&
       github.repository == 'evanjiang-jpg/ui_auto_framework' &&
       (github.event_name != 'workflow_dispatch' || github.event.inputs.deploy_enabled == 'true') &&
       secrets.DEPLOY_HOST != ''
     runs-on: ubuntu-latest
-    environment:
-      name: test
-      url: ${{ secrets.DEPLOY_URL }}
+    environment: test
     timeout-minutes: 10
 
     steps:
