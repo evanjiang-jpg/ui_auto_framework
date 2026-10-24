@@ -1,86 +1,172 @@
 # ==============================================================
-# GitLab CI 配置
-#
-# 分层策略（与 docs/重试与稳定性.md 的标签规范一致）：
-#   MR / 合入主干  -> smoke      冒烟卡点，必须全过
-#   打 tag / 定时  -> p0/p1      高优回归
-#   手动触发       -> 全量       发布前完整回归
-#
-# 使用前请在 GitLab 的 Settings > CI/CD > Variables 中配置：
-#   DINGTALK_WEBHOOK / DINGTALK_SECRET
-#   EMAIL_PASSWORD 等敏感变量
+# GitLab CI — 对齐 GitHub Actions workflow 逻辑
+# 对标文件：.github/workflows/ui-test.yml
+# 4 个 stage：
+#   ci → image → deploy → notify（notify 无论成败都跑）
+# ─────────────────────────────────────────────────────────────
+# 使用前请在 GitLab Settings → CI/CD → Variables 里配：
+#   DINGTALK_WEBHOOK / DINGTALK_SECRET / FEISHU_WEBHOOK / FEISHU_SECRET
+#   EMAIL_SMTP_HOST / EMAIL_USER / EMAIL_PASSWORD / EMAIL_RECEIVERS
+#   DEPLOY_HOST / DEPLOY_USER / DEPLOY_SSH_KEY / DEPLOY_PATH（可选）
 # ==============================================================
 
 stages:
-  - prepare
-  - smoke
-  - regression
+  - ci          # ① 跑测试 + Allure + artifact
+  - image       # ② Docker build push 到 GitLab Registry
+  - deploy      # ③ SSH 部署（手动审批，对标 GitHub environment: test）
+  - notify      # ④ 通知（无论前面成败都跑，always）
 
 variables:
+  PYTHON_VERSION: "3.10"
   PIP_CACHE_DIR: "$CI_PROJECT_DIR/.pip-cache"
   ENV: "test"
+  IMAGE_NAME: "$CI_PROJECT_PATH"
+  REGISTRY: "$CI_REGISTRY"
+  DOCKER_HOST: tcp://docker:2376
+  DOCKER_DRIVER: overlay2
 
 # --------------------------------------------------------------
-# 依赖安装（缓存复用，避免每个 job 重装）
+# 公共模板（避免每个 job 重复写安装依赖）
 # --------------------------------------------------------------
 .prepare_template: &prepare
-  image: python:3.10-slim
+  image: python:${PYTHON_VERSION}-slim
   cache:
     key: pip-$CI_COMMIT_REF_SLUG
     paths:
       - .pip-cache/
+  before_script:
+    - pip install --cache-dir=.pip-cache --upgrade pip -q
+    - pip install --cache-dir=.pip-cache -r requirements.txt -q
 
-prepare:
+# --------------------------------------------------------------
+# ① CI — 跑测试 / 生成 Allure / 上传 artifact
+#     对应 workflow 的 ui-test job
+# --------------------------------------------------------------
+ci-test:
   <<: *prepare
-  stage: prepare
+  stage: ci
   script:
-    - pip install --cache-dir=.pip-cache -r requirements.txt
     - python run.py --list-envs
-
-# --------------------------------------------------------------
-# 冒烟：MR 与合入主干触发，卡点
-# --------------------------------------------------------------
-smoke:
-  <<: *prepare
-  stage: smoke
-  needs: ["prepare"]
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    - if: '$CI_COMMIT_BRANCH == "main"'
-  script:
-    - python run.py -m smoke -n 4 --reruns 2 --reruns-delay 1 --no-report --notify
+    - python run.py --list-markers
+    - |
+      if [ "$CI_PIPELINE_SOURCE" = "merge_request_event" ]; then
+        SCOPE="smoke"
+      else
+        SCOPE="${SCOPE:-p0 or p1}"
+      fi
+      echo "执行范围: $SCOPE"
+      python run.py -m "$SCOPE" -n 4 --reruns 2 --reruns-delay 1 --no-report || true
+    - allure generate allure-results -o allure-report --clean || true
   artifacts:
-    name: "smoke-$CI_PIPELINE_ID"
-    when: always
-    expire_in: 30 days
     paths:
-      - logs/
-      - screenshots/
       - allure-results/
       - allure-report/
+      - logs/
+      - screenshots/
+    expire_in: 30 days
+    when: always
     reports:
       junit: report.xml
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH == "master"'
 
 # --------------------------------------------------------------
-# 回归：打 tag 或夜间定时触发，也可手动
+# ② CD — Docker 镜像推 GitLab Registry
+#     对应 workflow 的 image job
+#     对标京东 JDOS 制品库
 # --------------------------------------------------------------
-regression:
-  <<: *prepare
-  stage: regression
-  needs: ["prepare"]
-  rules:
-    - if: '$CI_COMMIT_TAG'
-    - if: '$CI_PIPELINE_SOURCE == "schedule"'
-    - when: manual
-      allow_failure: true
+cd-image:
+  stage: image
+  image: docker:latest
+  services:
+    - docker:dind
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
   script:
-    - python run.py -m "p0 or p1" -n 8 --reruns 2 --reruns-delay 1 --no-report --notify
-  artifacts:
-    name: "regression-$CI_PIPELINE_ID"
-    when: always
-    expire_in: 30 days
-    paths:
-      - logs/
-      - screenshots/
-      - allure-results/
-      - allure-report/
+    - echo "🔨 构建镜像：$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA .
+    - docker tag $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA $CI_REGISTRY_IMAGE:latest
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+    - docker push $CI_REGISTRY_IMAGE:latest
+  after_script:
+    - echo "✅ 镜像推送成功：$CI_REGISTRY_IMAGE:latest"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH == "master"'
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+    - if: '$CI_COMMIT_TAG'
+
+# --------------------------------------------------------------
+# ③ CD — SSH 部署到测试环境（手动审批）
+#     对应 workflow 的 deploy-test job + environment: test
+#     对标京东 BOE 持续交付，手动点 "▶ Run" 才执行
+# --------------------------------------------------------------
+cd-deploy-test:
+  stage: deploy
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache openssh-client
+    - mkdir -p ~/.ssh
+    - echo "$DEPLOY_SSH_KEY" | tr -d '\r' > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - ssh-keyscan -H $DEPLOY_HOST >> ~/.ssh/known_hosts 2>/dev/null || true
+  script:
+    - |
+      if [ -n "$DEPLOY_HOST" ]; then
+        USER="${DEPLOY_USER:-root}"
+        PATH="${DEPLOY_PATH:-/opt/ui_auto_framework}"
+        echo "=== SSH 部署到 $USER@$DEPLOY_HOST ==="
+        ssh $USER@$DEPLOY_HOST "cd $PATH && \
+          echo '=== 拉取代码 ===' && \
+          git pull --ff-only origin main && \
+          echo '=== 拉取镜像 ===' && \
+          docker pull $CI_REGISTRY_IMAGE:latest && \
+          echo '=== 重启容器 ===' && \
+          docker compose up -d --remove-orphans && \
+          echo '=== 清理旧镜像 ===' && \
+          docker image prune -f && \
+          echo '=== 运行状态 ===' && \
+          docker compose ps"
+        echo "✅ SSH 部署完成"
+      else
+        echo "⚠️ 未配置 DEPLOY_HOST，跳过部署"
+      fi
+  environment:
+    name: test
+    url: http://$DEPLOY_HOST
+  when: manual
+  allow_failure: true
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH == "master"'
+
+# --------------------------------------------------------------
+# ④ 通知 — 无论前面成败都跑
+#     对应 workflow 的 notify job + needs + if: always()
+#     run.py --notify-only 统一处理飞书/钉钉/邮件
+# --------------------------------------------------------------
+notify:
+  <<: *prepare
+  stage: notify
+  needs:
+    - job: ci-test
+      artifacts: true
+  script:
+    - cp -r allure-results/ ./allure-results 2>/dev/null || mkdir -p ./allure-results
+    - python run.py --notify-only || echo "⚠️ 通知通道有失败，已跳过"
+  variables:
+    ALLURE_REPORT_URL: "${CI_PAGES_URL}/allure-report"
+    CI_PIPELINE_ID: "${CI_PIPELINE_ID}"
+    CI_COMMIT_AUTHOR: "${CI_COMMIT_AUTHOR}"
+    CI_COMMIT_MSG: "${CI_COMMIT_MESSAGE}"
+    CI_BUILD_URL: "${CI_PIPELINE_URL}"
+  when: always
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH == "master"'

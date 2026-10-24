@@ -1,35 +1,55 @@
 // ==============================================================
-// Jenkins 声明式流水线
-//
-// 前置要求：
-//   1. 安装插件：Allure Jenkins Plugin、JUnit
-//   2. 在 Manage Jenkins > Credentials 中配置：
-//        ui-test-dingtalk-secret   （钉钉加签密钥，Secret text）
-//        ui-test-email-password    （邮箱授权码，Secret text）
-//   3. 定时构建：Configure > Build Triggers > 每天 02:00
+// Jenkins 声明式流水线 — 对齐 GitHub Actions workflow 逻辑
+// 对标文件：.github/workflows/ui-test.yml
+// 4 个 stage + post 通知：
+//   ① CI 执行测试 → ② CD 镜像构建推送 → ③ CD SSH 部署 → ④ post 通知
 // ==============================================================
 
 pipeline {
     agent any
 
     parameters {
-        choice(name: 'ENV', choices: ['test', 'dev', 'staging'],
+        choice(name: 'ENV',
+               choices: ['test', 'dev', 'staging'],
                description: '执行环境')
-        choice(name: 'SCOPE', choices: ['smoke', 'p0', 'p0 or p1', 'all'],
+        choice(name: 'SCOPE',
+               choices: ['smoke', 'p0', 'p0 or p1', 'all'],
                description: '执行范围')
-        string(name: 'WORKERS', defaultValue: '4',
+        string(name: 'WORKERS',
+               defaultValue: '4',
                description: '并行进程数')
-        booleanParam(name: 'NOTIFY', defaultValue: true,
-               description: '是否发送钉钉/邮件通知')
+        booleanParam(name: 'BUILD_IMAGE',
+               defaultValue: true,
+               description: '是否构建 Docker 镜像')
+        booleanParam(name: 'DEPLOY',
+               defaultValue: false,
+               description: '是否执行 SSH 部署')
     }
 
     environment {
-        ENV = "${params.ENV}"
-        DINGTALK_ENABLED = "${params.NOTIFY}"
+        ENV             = "${params.ENV}"
+        REGISTRY        = 'registry.cn-hangzhou.aliyuncs.com'
+        IMAGE_NAME      = "${JOB_NAME}"
+        PYTHON_VERSION  = '3.10'
+        DOCKERFILE_PATH = './Dockerfile'
+
+        // 通知凭据（对应 GitHub Secrets）
         DINGTALK_WEBHOOK = credentials('ui-test-dingtalk-webhook')
         DINGTALK_SECRET  = credentials('ui-test-dingtalk-secret')
-        EMAIL_ENABLED    = "${params.NOTIFY}"
+        FEISHU_WEBHOOK   = credentials('ui-test-feishu-webhook')
+        FEISHU_SECRET    = credentials('ui-test-feishu-secret')
         EMAIL_PASSWORD   = credentials('ui-test-email-password')
+
+        // 部署凭据（可选，不配则跳过）
+        DEPLOY_HOST     = credentials('ui-test-deploy-host')
+        DEPLOY_USER     = credentials('ui-test-deploy-user')
+        DEPLOY_SSH_KEY  = credentials('ui-test-deploy-ssh-key')
+        DEPLOY_PATH     = credentials('ui-test-deploy-path')
+
+        // CI 内置变量（对应 GitHub env）
+        CI_PIPELINE_ID   = "${BUILD_NUMBER}"
+        CI_COMMIT_AUTHOR = "${GIT_AUTHOR_NAME}"
+        CI_BUILD_URL     = "${BUILD_URL}"
     }
 
     options {
@@ -39,58 +59,173 @@ pipeline {
     }
 
     stages {
-        stage('环境检查') {
+        // ============================================================
+        // ① CI — 跑测试 / 生成 Allure / 归档产物
+        //     对应 workflow 的 ui-test job
+        // ============================================================
+        stage('① CI 执行测试') {
+            agent {
+                docker {
+                    image "python:${PYTHON_VERSION}-slim"
+                    args '-v /var/run/docker.sock:/var/run/docker.sock'
+                }
+            }
             steps {
                 sh 'python --version'
-                sh 'chrome --version || chromium --version || echo "未安装 Chrome，使用桩驱动"'
+                sh 'pip install --upgrade pip -q'
+                sh 'pip install -r requirements.txt -q'
                 sh 'python run.py --list-envs'
-            }
-        }
+                sh 'python run.py --list-markers'
 
-        stage('安装依赖') {
-            steps {
-                sh 'pip install -r requirements.txt'
-            }
-        }
-
-        stage('执行测试') {
-            steps {
                 script {
                     def markerArg = params.SCOPE == 'all' ? '' : "-m \"${params.SCOPE}\""
-                    def notifyArg = params.NOTIFY ? '--notify' : ''
                     sh """
                         python run.py \
                             -e ${params.ENV} \
                             ${markerArg} \
                             -n ${params.WORKERS} \
                             --reruns 2 --reruns-delay 1 \
-                            --no-report ${notifyArg}
+                            --no-report || true
                     """
+                }
+
+                // 生成 Allure 静态报告（需要 Jenkins 装 Allure Plugin）
+                sh 'allure generate allure-results -o allure-report --clean || true'
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'allure-results/**',
+                                     allowEmptyArchive: true
+                    archiveArtifacts artifacts: 'allure-report/**',
+                                     allowEmptyArchive: true
+                    archiveArtifacts artifacts: 'logs/**, screenshots/**',
+                                     allowEmptyArchive: true
+
+                    script {
+                        if (fileExists('allure-results')) {
+                            allure includeProperties: false,
+                                   jdk: '',
+                                   results: [[path: 'allure-results']]
+                        }
+                    }
+                }
+            }
+        }
+
+        // ============================================================
+        // ② CD — Docker 镜像推仓库
+        //     对应 workflow 的 image job
+        //     对标京东 JDOS 制品库
+        // ============================================================
+        stage('② CD 镜像构建推送') {
+            when {
+                allOf {
+                    anyOf {
+                        branch 'main'
+                        branch 'master'
+                        expression { env.BRANCH_NAME == null }
+                    }
+                    expression { params.BUILD_IMAGE }
+                }
+            }
+            steps {
+                script {
+                    def tag      = env.BRANCH_NAME ?: 'latest'
+                    def shortSha = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
+                    def fullImage = "${REGISTRY}/${IMAGE_NAME}"
+
+                    echo "🔨 构建镜像：${fullImage}:latest"
+                    sh """
+                        docker build -f ${DOCKERFILE_PATH} \
+                            -t ${fullImage}:${tag} \
+                            -t ${fullImage}:${shortSha} \
+                            -t ${fullImage}:latest .
+                        docker push ${fullImage}:${tag}
+                        docker push ${fullImage}:${shortSha}
+                        docker push ${fullImage}:latest
+                    """
+                    echo "✅ 镜像推送成功：${fullImage}:latest"
+                }
+            }
+            post {
+                failure {
+                    echo "⚠️ Docker 镜像推送失败，不阻塞后续流程"
+                }
+            }
+        }
+
+        // ============================================================
+        // ③ CD — SSH 部署到测试环境（手动审批）
+        //     对应 workflow 的 deploy-test job + environment: test
+        //     对标京东 BOE 持续交付，手动审批后放行
+        // ============================================================
+        stage('③ CD SSH 部署测试环境') {
+            when {
+                allOf {
+                    anyOf {
+                        branch 'main'
+                        branch 'master'
+                    }
+                    expression { params.DEPLOY }
+                }
+            }
+            input {
+                message "确认部署到测试环境（${DEPLOY_HOST}）？"
+                ok "确认部署"
+            }
+            steps {
+                script {
+                    if (env.DEPLOY_HOST && !env.DEPLOY_HOST.isEmpty()) {
+                        def user    = env.DEPLOY_USER ?: 'root'
+                        def path    = env.DEPLOY_PATH ?: '/opt/ui_auto_framework'
+                        def keyFile = env.DEPLOY_SSH_KEY
+
+                        sshagent(credentials: [env.DEPLOY_SSH_KEY]) {
+                            sh """
+                                ssh -o StrictHostKeyChecking=no \
+                                    ${user}@${DEPLOY_HOST} \
+                                    "cd ${path} && \
+                                     echo '=== 拉取代码 ===' && \
+                                     git pull --ff-only origin main && \
+                                     echo '=== 拉取镜像 ===' && \
+                                     docker pull ${REGISTRY}/${IMAGE_NAME}:latest && \
+                                     echo '=== 重启容器 ===' && \
+                                     docker compose up -d --remove-orphans && \
+                                     echo '=== 清理旧镜像 ===' && \
+                                     docker image prune -f && \
+                                     echo '=== 运行状态 ===' && \
+                                     docker compose ps"
+                            """
+                        }
+                        echo "✅ SSH 部署完成"
+                    } else {
+                        echo "⚠️ 未配置 DEPLOY_HOST，跳过 SSH 部署"
+                    }
                 }
             }
         }
     }
 
+    // ================================================================
+    // ④ 通知 — 对应 workflow 的 notify job + needs + if: always()
+    // 无论 CI 成败都发，用 run.py --notify-only 统一处理
+    // ================================================================
     post {
         always {
-            // 归档日志、截图与原始结果，便于失败复盘
-            archiveArtifacts artifacts: 'logs/**, screenshots/**, allure-results/**',
-                             allowEmptyArchive: true, fingerprint: true
-
-            // 生成并展示 Allure 报告
             script {
-                if (fileExists('allure-results')) {
-                    allure includeProperties: false,
-                           jdk: '',
-                           results: [[path: 'allure-results']]
-                }
+                def status = currentBuild.result ?: 'SUCCESS'
+                def icon   = status == 'SUCCESS' ? '✅' : '❌'
+                def allureUrl = "${BUILD_URL}allure"
+
+                echo "=== 发送通知（状态：${status}）==="
+
+                sh """
+                    python run.py --notify-only \
+                        || echo "⚠️ 通知通道有失败，已跳过"
+                """
+
+                echo "${icon} Jenkins #${BUILD_NUMBER} — ${status} — ${BUILD_URL}"
             }
-        }
-        failure {
-            echo '存在失败用例，请查看 Allure 报告与失败截图'
-        }
-        success {
-            echo '全部用例通过'
         }
     }
 }

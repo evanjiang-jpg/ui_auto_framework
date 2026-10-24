@@ -1,0 +1,96 @@
+// ==============================================================
+// Jenkins 声明式流水线
+//
+// 前置要求：
+//   1. 安装插件：Allure Jenkins Plugin、JUnit
+//   2. 在 Manage Jenkins > Credentials 中配置：
+//        ui-test-dingtalk-secret   （钉钉加签密钥，Secret text）
+//        ui-test-email-password    （邮箱授权码，Secret text）
+//   3. 定时构建：Configure > Build Triggers > 每天 02:00
+// ==============================================================
+
+pipeline {
+    agent any
+
+    parameters {
+        choice(name: 'ENV', choices: ['test', 'dev', 'staging'],
+               description: '执行环境')
+        choice(name: 'SCOPE', choices: ['smoke', 'p0', 'p0 or p1', 'all'],
+               description: '执行范围')
+        string(name: 'WORKERS', defaultValue: '4',
+               description: '并行进程数')
+        booleanParam(name: 'NOTIFY', defaultValue: true,
+               description: '是否发送钉钉/邮件通知')
+    }
+
+    environment {
+        ENV = "${params.ENV}"
+        DINGTALK_ENABLED = "${params.NOTIFY}"
+        DINGTALK_WEBHOOK = credentials('ui-test-dingtalk-webhook')
+        DINGTALK_SECRET  = credentials('ui-test-dingtalk-secret')
+        EMAIL_ENABLED    = "${params.NOTIFY}"
+        EMAIL_PASSWORD   = credentials('ui-test-email-password')
+    }
+
+    options {
+        timestamps()
+        timeout(time: 60, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '30'))
+    }
+
+    stages {
+        stage('环境检查') {
+            steps {
+                sh 'python --version'
+                sh 'chrome --version || chromium --version || echo "未安装 Chrome，使用桩驱动"'
+                sh 'python run.py --list-envs'
+            }
+        }
+
+        stage('安装依赖') {
+            steps {
+                sh 'pip install -r requirements.txt'
+            }
+        }
+
+        stage('执行测试') {
+            steps {
+                script {
+                    def markerArg = params.SCOPE == 'all' ? '' : "-m \"${params.SCOPE}\""
+                    def notifyArg = params.NOTIFY ? '--notify' : ''
+                    sh """
+                        python run.py \
+                            -e ${params.ENV} \
+                            ${markerArg} \
+                            -n ${params.WORKERS} \
+                            --reruns 2 --reruns-delay 1 \
+                            --no-report ${notifyArg}
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            // 归档日志、截图与原始结果，便于失败复盘
+            archiveArtifacts artifacts: 'logs/**, screenshots/**, allure-results/**',
+                             allowEmptyArchive: true, fingerprint: true
+
+            // 生成并展示 Allure 报告
+            script {
+                if (fileExists('allure-results')) {
+                    allure includeProperties: false,
+                           jdk: '',
+                           results: [[path: 'allure-results']]
+                }
+            }
+        }
+        failure {
+            echo '存在失败用例，请查看 Allure 报告与失败截图'
+        }
+        success {
+            echo '全部用例通过'
+        }
+    }
+}
