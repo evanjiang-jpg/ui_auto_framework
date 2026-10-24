@@ -3,8 +3,7 @@
 #
 # 触发方式：push(main) / pull_request / 打 tag / 手动 / 每日定时
 # 使用前在仓库 Settings > Secrets and variables > Actions 配置：
-#   DINGTALK_WEBHOOK / DINGTALK_SECRET / EMAIL_PASSWORD 等
-# 🔒  加密存储，运行时也不会被日志泄露	📝 明文存储，日志里可以看到 飞书
+#   DINGTALK_WEBHOOK / DINGTALK_SECRET / FEISHU_WEBHOOK 等
 # ==============================================================
 name: UI 自动化测试
 
@@ -31,6 +30,9 @@ jobs:
     name: 执行 UI 自动化测试
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      pages: write
+      id-token: write
 
     steps:
       - name: 检出代码
@@ -81,7 +83,6 @@ jobs:
           CI_BUILD_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           ALLURE_REPORT_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
         run: |
-          # 分层策略：PR 只跑冒烟；手动/定时跑高优或指定范围
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             SCOPE="smoke"
           else
@@ -98,10 +99,6 @@ jobs:
 
       - name: 部署 GitHub Pages
         if: always()
-        needs: run
-        permissions:
-          pages: write
-          id-token: write
         uses: actions/deploy-pages@v4
 
       - name: 上传测试产物
