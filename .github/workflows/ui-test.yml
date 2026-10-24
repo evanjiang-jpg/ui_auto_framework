@@ -5,7 +5,7 @@
 # 使用前在仓库 Settings > Secrets and variables > Actions 配置：
 #   DINGTALK_WEBHOOK / DINGTALK_SECRET / FEISHU_WEBHOOK 等
 # ==============================================================
-name: UI 自动化测试
+name: UI 自动化测试框架封装
 
 on:
   push:
