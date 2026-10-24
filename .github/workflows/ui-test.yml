@@ -56,10 +56,8 @@ jobs:
         id: run
         continue-on-error: true
         env:
-          DINGTALK_ENABLED: ${{ secrets.DINGTALK_WEBHOOK != '' }}
           DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
           DINGTALK_SECRET: ${{ secrets.DINGTALK_SECRET }}
-          EMAIL_ENABLED: ${{ secrets.EMAIL_PASSWORD != '' }}
           EMAIL_SMTP_HOST: ${{ secrets.EMAIL_SMTP_HOST }}
           EMAIL_USER: ${{ secrets.EMAIL_USER }}
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}

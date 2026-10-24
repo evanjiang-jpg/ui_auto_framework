@@ -21,16 +21,23 @@ def _split_env(name: str) -> list:
     return [x.strip() for x in raw.split(",") if x.strip()]
 
 
-def _to_bool(name: str, default: bool = False) -> bool:
-    return (os.getenv(name, str(default)).lower() == "true")
+def _to_bool(name: str, default: bool = False, fallback_key: str = "") -> bool:
+    raw = os.getenv(name, "").strip().lower()
+    if raw == "true":
+        return True
+    if raw == "false":
+        return False
+    if fallback_key and os.getenv(fallback_key, "").strip():
+        return True
+    return default
 
 
 class TestNotifier:
     """测试结果通知器：按 .env 配置决定启用哪些通道"""
 
     def __init__(self):
-        self.ding_enabled = _to_bool("DINGTALK_ENABLED")
-        self.email_enabled = _to_bool("EMAIL_ENABLED")
+        self.ding_enabled = _to_bool("DINGTALK_ENABLED", fallback_key="DINGTALK_WEBHOOK")
+        self.email_enabled = _to_bool("EMAIL_ENABLED", fallback_key="EMAIL_PASSWORD")
 
         self.ding_cfg = {
             "webhook": os.getenv("DINGTALK_WEBHOOK", ""),
