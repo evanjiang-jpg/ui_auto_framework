@@ -1,0 +1,35 @@
+# ==============================================================
+# docker compose 一键运行
+#
+#   docker compose up --build                      跑 test 环境全量
+#   ENV=dev docker compose up --build              跑 dev 环境
+#   EXTRA_ARGS="-m smoke -n 4" docker compose up   跑冒烟，4 进程并行
+#   EXTRA_ARGS="-m smoke --notify" docker compose up --build
+#
+# 产物（报告/日志/截图/原始结果）会挂载到宿主机 docker_output/ 目录
+# ==============================================================
+services:
+  ui-test:
+    build: .
+    image: ui-auto-framework:latest
+    container_name: ui-auto-test
+
+    # Chrome 在容器内运行需要较大的共享内存，否则容易崩溃
+    shm_size: 2gb
+
+    environment:
+      ENV: ${ENV:-test}
+      EXTRA_ARGS: ${EXTRA_ARGS:-}
+      # 通知相关配置也可在此透传（建议用 CI 平台的加密变量）
+      # DINGTALK_ENABLED: "false"
+
+    volumes:
+      - ./docker_output/allure-results:/app/allure-results
+      - ./docker_output/allure-report:/app/allure-report
+      - ./docker_output/logs:/app/logs
+      - ./docker_output/screenshots:/app/screenshots
+
+    command: ["sh", "-c", "xvfb-run -a python run.py --no-report $${EXTRA_ARGS}"]
+
+    # 退出码直接反映用例结果，便于 CI 判定
+    restart: "no"

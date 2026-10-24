@@ -1,0 +1,50 @@
+# ==============================================================
+# 数据库连接配置（按环境分层，与 environments.yaml 同样的合并规则）
+# 支持的 type：
+#   sqlite     —— 内置驱动，零依赖，适合本地/demo（默认）
+#   mysql      —— 需 pip install pymysql
+#   postgresql —— 需 pip install psycopg2-binary
+# 密码一律留空，由环境变量 DB_PASSWORD 注入
+# ==============================================================
+
+default:
+  type: sqlite
+  timeout: 10
+  # sqlite 相对路径以工程根为基准
+  database: data/demo.db
+  # 查询结果字符集
+  charset: utf8mb4
+  # 生产/预发布建议开启，仅允许 SELECT，防止误改线上数据
+  readonly: false
+
+
+dev:
+  type: sqlite
+  database: data/demo.db
+
+
+test:
+  type: sqlite
+  database: data/demo.db
+
+
+staging:
+  type: mysql
+  host: staging-db.internal
+  port: 3306
+  user: tester
+  password: "${DB_PASSWORD}"     # 由环境变量注入，配置文件不留明文
+  database: staging_db
+  charset: utf8mb4
+  readonly: true
+
+
+prod:
+  type: mysql
+  host: prod-db.internal
+  port: 3306
+  user: readonly
+  password: "${PROD_DB_PASSWORD}"   # 由环境变量注入
+  database: prod_db
+  charset: utf8mb4
+  readonly: true

@@ -1,0 +1,60 @@
+# ==============================================================
+# 登录模块测试数据（yaml 格式）
+#
+# 结构说明：
+#   global —— 所有用例共享的公共参数，会自动并入每条用例
+#   cases  —— 用例列表，每个字典即一组测试数据
+#
+# 元数据字段（由 plugin/hooks_tags.py 自动转成 Allure 标签，无需在代码里写装饰器）：
+#   case_name    用例显示名
+#   priority     优先级 P0/P1/P2/P3 -> Allure severity
+#   tags         标签列表
+#   owner        负责人
+#   feature      所属功能模块
+#   story        子场景
+#   description  用例描述
+#   expected     预期结果
+#
+# 其余字段会作为测试参数传入，并在 Allure 描述里自动罗列出来。
+# ==============================================================
+
+global:
+  app_name: "演示系统"
+  module: "login"
+
+cases:
+  - case_name: "正确账号密码登录成功"
+    username: "13800138000"
+    password: "test123"
+    expect_success: true
+    priority: "P0"
+    tags: ["login", "smoke", "positive"]
+    owner: "qa_zhangsan"
+    feature: "登录模块"
+    story: "正常登录"
+    description: "使用正确的账号密码登录，应登录成功并拿到 token"
+    expected: "登录成功，返回非空 token"
+
+  - case_name: "用户名为空登录失败"
+    username: ""
+    password: "test123"
+    expect_success: false
+    priority: "P1"
+    tags: ["login", "negative"]
+    owner: "qa_zhangsan"
+    feature: "登录模块"
+    story: "必填校验"
+    description: "用户名留空时点击登录，应提示校验失败"
+    expected: "抛出参数校验异常，不发放 token"
+
+  - case_name: "密码为空登录失败"
+    username: "test_001"
+    password: ""
+    expect_success: false
+    priority: "P2"
+    tags: ["login", "negative"]
+    owner: "qa_lisi"
+    feature: "登录模块"
+    story: "必填校验"
+    description: "密码留空时点击登录，应提示校验失败"
+    expected: "抛出参数校验异常，不发放 token"

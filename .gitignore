@@ -1,0 +1,32 @@
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ---------- 测试产物 ----------
+.pytest_cache/
+.testmon/
+allure-results/
+allure-report/
+logs/
+screenshots/
+*.xml
+report.html
+
+# ---------- 数据库（演示库不入库） ----------
+data/demo.db
+
+# ---------- 敏感与本地配置（务必不要提交） ----------
+config/.env
+config/local.yaml
+
+# ---------- 容器产物 ----------
+docker_output/
+
+# ---------- 编辑器 ----------
+.idea/
+.vscode/
+*.swp
+.DS_Store

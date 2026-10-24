@@ -1,0 +1,86 @@
+# ==============================================================
+# GitLab CI 配置
+#
+# 分层策略（与 docs/重试与稳定性.md 的标签规范一致）：
+#   MR / 合入主干  -> smoke      冒烟卡点，必须全过
+#   打 tag / 定时  -> p0/p1      高优回归
+#   手动触发       -> 全量       发布前完整回归
+#
+# 使用前请在 GitLab 的 Settings > CI/CD > Variables 中配置：
+#   DINGTALK_WEBHOOK / DINGTALK_SECRET
+#   EMAIL_PASSWORD 等敏感变量
+# ==============================================================
+
+stages:
+  - prepare
+  - smoke
+  - regression
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.pip-cache"
+  ENV: "test"
+
+# --------------------------------------------------------------
+# 依赖安装（缓存复用，避免每个 job 重装）
+# --------------------------------------------------------------
+.prepare_template: &prepare
+  image: python:3.10-slim
+  cache:
+    key: pip-$CI_COMMIT_REF_SLUG
+    paths:
+      - .pip-cache/
+
+prepare:
+  <<: *prepare
+  stage: prepare
+  script:
+    - pip install --cache-dir=.pip-cache -r requirements.txt
+    - python run.py --list-envs
+
+# --------------------------------------------------------------
+# 冒烟：MR 与合入主干触发，卡点
+# --------------------------------------------------------------
+smoke:
+  <<: *prepare
+  stage: smoke
+  needs: ["prepare"]
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  script:
+    - python run.py -m smoke -n 4 --reruns 2 --reruns-delay 1 --no-report --notify
+  artifacts:
+    name: "smoke-$CI_PIPELINE_ID"
+    when: always
+    expire_in: 30 days
+    paths:
+      - logs/
+      - screenshots/
+      - allure-results/
+      - allure-report/
+    reports:
+      junit: report.xml
+
+# --------------------------------------------------------------
+# 回归：打 tag 或夜间定时触发，也可手动
+# --------------------------------------------------------------
+regression:
+  <<: *prepare
+  stage: regression
+  needs: ["prepare"]
+  rules:
+    - if: '$CI_COMMIT_TAG'
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - when: manual
+      allow_failure: true
+  script:
+    - python run.py -m "p0 or p1" -n 8 --reruns 2 --reruns-delay 1 --no-report --notify
+  artifacts:
+    name: "regression-$CI_PIPELINE_ID"
+    when: always
+    expire_in: 30 days
+    paths:
+      - logs/
+      - screenshots/
+      - allure-results/
+      - allure-report/

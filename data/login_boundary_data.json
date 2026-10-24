@@ -1,0 +1,28 @@
+[
+  {
+    "case_name": "手机号长度不足11位",
+    "username": "1380013",
+    "password": "test123",
+    "expect_success": false,
+    "priority": "P2",
+    "tags": ["login", "boundary", "negative"],
+    "owner": "qa_lisi",
+    "feature": "登录模块",
+    "story": "边界值校验",
+    "description": "手机号长度不足 11 位，应校验失败",
+    "expected": "抛出参数校验异常"
+  },
+  {
+    "case_name": "手机号长度刚好11位",
+    "username": "13800138000",
+    "password": "test123",
+    "expect_success": true,
+    "priority": "P1",
+    "tags": ["login", "boundary", "positive"],
+    "owner": "qa_lisi",
+    "feature": "登录模块",
+    "story": "边界值校验",
+    "description": "手机号刚好 11 位，应校验通过",
+    "expected": "校验通过并拿到 token"
+  }
+]

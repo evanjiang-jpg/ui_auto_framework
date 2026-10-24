@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>UI自动化测试执行报告</title>
+</head>
+<body style="margin:0;padding:24px;background:#f5f6f8;font-family:'Microsoft YaHei',Arial,sans-serif;color:#333;">
+  <div style="max-width:760px;margin:0 auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);">
+
+    <!-- 头部 -->
+    <div style="padding:22px 28px;color:#fff;background:{% if is_success %}linear-gradient(135deg,#36cfc9,#1890ff){% else %}linear-gradient(135deg,#ff7875,#f5222d){% endif %};">
+      <div style="font-size:20px;font-weight:700;">
+        {% if is_success %}✅{% else %}❌{% endif %} UI自动化测试执行报告
+      </div>
+      <div style="margin-top:6px;font-size:13px;opacity:.92;">
+        {{ status_text }}　|　环境 {{ env | upper }}　|　{{ executed_at }}
+      </div>
+    </div>
+
+    <!-- 统计卡片 -->
+    <div style="padding:24px 28px;">
+      <table style="width:100%;border-collapse:collapse;text-align:center;font-size:14px;">
+        <tr>
+          <td style="padding:12px 6px;background:#f0f5ff;border-radius:6px;">
+            <div style="font-size:22px;font-weight:700;color:#1890ff;">{{ total }}</div>
+            <div style="margin-top:4px;color:#666;">用例总数</div>
+          </td>
+          <td style="width:12px;"></td>
+          <td style="padding:12px 6px;background:#f6ffed;border-radius:6px;">
+            <div style="font-size:22px;font-weight:700;color:#52c41a;">{{ passed }}</div>
+            <div style="margin-top:4px;color:#666;">通过</div>
+          </td>
+          <td style="width:12px;"></td>
+          <td style="padding:12px 6px;background:#fff1f0;border-radius:6px;">
+            <div style="font-size:22px;font-weight:700;color:#f5222d;">{{ failed }}</div>
+            <div style="margin-top:4px;color:#666;">失败</div>
+          </td>
+          <td style="width:12px;"></td>
+          <td style="padding:12px 6px;background:#fff7e6;border-radius:6px;">
+            <div style="font-size:22px;font-weight:700;color:#fa8c16;">{{ broken }}</div>
+            <div style="margin-top:4px;color:#666;">异常</div>
+          </td>
+          <td style="width:12px;"></td>
+          <td style="padding:12px 6px;background:#fafafa;border-radius:6px;">
+            <div style="font-size:22px;font-weight:700;color:#8c8c8c;">{{ skipped }}</div>
+            <div style="margin-top:4px;color:#666;">跳过</div>
+          </td>
+        </tr>
+      </table>
+
+      <!-- 通过率 & 耗时 -->
+      <div style="margin-top:18px;font-size:14px;color:#555;">
+        通过率：
+        <b style="color:{% if pass_rate >= 95 %}#52c41a{% elif pass_rate >= 80 %}#fa8c16{% else %}#f5222d{% endif %};">
+          {{ pass_rate }}%
+        </b>
+        　|　总耗时：<b>{{ duration }}s</b>
+        {% if retried_success %}　|　重试后成功：<b>{{ retried_success }}</b> 条{% endif %}
+      </div>
+
+      {% if failed_cases %}
+      <!-- 失败用例 -->
+      <h3 style="margin:24px 0 10px;font-size:15px;color:#f5222d;">失败用例（前 {{ failed_cases | length }} 条）</h3>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;">
+        <thead>
+          <tr style="background:#fafafa;">
+            <th style="padding:8px 10px;border:1px solid #eee;text-align:left;width:40px;">#</th>
+            <th style="padding:8px 10px;border:1px solid #eee;text-align:left;">用例名称</th>
+            <th style="padding:8px 10px;border:1px solid #eee;text-align:left;">错误摘要</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for case in failed_cases %}
+          <tr>
+            <td style="padding:8px 10px;border:1px solid #eee;">{{ loop.index }}</td>
+            <td style="padding:8px 10px;border:1px solid #eee;">{{ case.name }}</td>
+            <td style="padding:8px 10px;border:1px solid #eee;color:#f5222d;">{{ case.message | truncate(120) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+
+      {% if report_url %}
+      <div style="margin-top:24px;">
+        <a href="{{ report_url }}"
+           style="display:inline-block;padding:10px 22px;background:#1890ff;color:#fff;text-decoration:none;border-radius:4px;font-size:14px;">
+          查看完整 Allure 报告
+        </a>
+      </div>
+      {% endif %}
+
+      {% if pipeline_id %}
+      <div style="margin-top:14px;font-size:13px;color:#888;">
+        流水线 #{{ pipeline_id }}{% if commit_msg %}　|　{{ commit_msg }}{% endif %}{% if author %}　|　提交人：{{ author }}{% endif %}
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- 页脚 -->
+    <div style="padding:14px 28px;background:#fafafa;font-size:12px;color:#999;border-top:1px solid #f0f0f0;">
+      本邮件由 UI 自动化测试框架自动发送，请勿直接回复。报告附件为 Allure HTML 压缩包，解压后打开 index.html 查看。
+    </div>
+  </div>
+</body>
+</html>

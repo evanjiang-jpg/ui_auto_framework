@@ -1,0 +1,98 @@
+# ==============================================================
+# GitHub Actions 工作流
+#
+# 触发方式：push(main) / pull_request / 打 tag / 手动 / 每日定时
+# 使用前在仓库 Settings > Secrets and variables > Actions 配置：
+#   DINGTALK_WEBHOOK / DINGTALK_SECRET / EMAIL_PASSWORD 等
+# ==============================================================
+name: UI 自动化测试
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    - cron: '0 18 * * *'        # 每天 UTC 18:00（北京时间 02:00）跑全量回归
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: '执行范围（标签表达式）'
+        required: false
+        default: 'p0 or p1'
+        type: string
+
+env:
+  ENV: test
+
+jobs:
+  ui-test:
+    name: 执行 UI 自动化测试
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: pip
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 查看可用环境与标签
+        run: |
+          python run.py --list-envs
+          python run.py --list-markers
+
+      - name: 执行测试
+        id: run
+        continue-on-error: true
+        env:
+          DINGTALK_ENABLED: ${{ secrets.DINGTALK_WEBHOOK != '' }}
+          DINGTALK_WEBHOOK: ${{ secrets.DINGTALK_WEBHOOK }}
+          DINGTALK_SECRET: ${{ secrets.DINGTALK_SECRET }}
+          EMAIL_ENABLED: ${{ secrets.EMAIL_PASSWORD != '' }}
+          EMAIL_SMTP_HOST: ${{ secrets.EMAIL_SMTP_HOST }}
+          EMAIL_USER: ${{ secrets.EMAIL_USER }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_RECEIVERS: ${{ secrets.EMAIL_RECEIVERS }}
+          CI_PIPELINE_ID: ${{ github.run_id }}
+          CI_COMMIT_AUTHOR: ${{ github.actor }}
+          CI_COMMIT_MSG: ${{ github.event.head_commit.message }}
+          CI_BUILD_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # 分层策略：PR 只跑冒烟；手动/定时跑高优或指定范围
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            SCOPE="smoke"
+          else
+            SCOPE="${{ github.event.inputs.scope || 'p0 or p1' }}"
+          fi
+          echo "执行范围: $SCOPE"
+          python run.py -m "$SCOPE" -n 4 --reruns 2 --reruns-delay 1 --no-report --notify
+
+      - name: 上传测试产物
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-test-artifacts
+          retention-days: 30
+          path: |
+            logs/
+            screenshots/
+            allure-results/
+
+      - name: 汇总结果
+        run: |
+          echo "执行结论：${{ steps.run.outcome }}"
+          if [ "${{ steps.run.outcome }}" != "success" ]; then
+            echo "存在失败用例，请下载 artifact 查看截图与报告"
+            exit 1
+          fi
+          echo "全部用例通过"

@@ -1,0 +1,41 @@
+## {% if is_success %}✅{% else %}❌{% endif %} UI自动化测试执行通知
+
+**执行结果**：{{ status_text }}
+**执行环境**：{{ env | upper }}　|　**触发方式**：{{ trigger_type }}
+**执行时间**：{{ executed_at }}
+
+---
+
+**用例统计**
+
+| 总数 | 通过 | 失败 | 异常 | 跳过 | 通过率 | 耗时 |
+| :--: | :--: | :--: | :--: | :--: | :----: | :--: |
+| {{ total }} | {{ passed }} | {{ failed }} | {{ broken }} | {{ skipped }} | {{ pass_rate }}% | {{ duration }}s |
+{% if retried_success %}
+
+> 提示：有 {{ retried_success }} 条用例经过重试后成功，属于偶发抖动，建议关注。
+{% endif %}
+{% if failed_cases %}
+
+---
+
+**失败用例（前 {{ failed_cases | length }} 条）**
+{% for case in failed_cases %}
+{{ loop.index }}. {{ case.name }}
+{% endfor %}
+{% endif %}
+{% if report_url %}
+
+[👉 查看完整 Allure 报告]({{ report_url }})
+{% endif %}
+{% if pipeline_id %}
+
+流水线：#{{ pipeline_id }}{% if commit_msg %}　|　{{ commit_msg }}{% endif %}{% if author %}　|　提交人：{{ author }}{% endif %}
+{% endif %}
+{% if at_mobiles %}
+
+{% for mobile in at_mobiles %}@{{ mobile }} {% endfor %}
+{% endif %}
+{% if at_all %}
+@所有人
+{% endif %}

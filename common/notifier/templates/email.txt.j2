@@ -1,0 +1,31 @@
+UI自动化测试执行报告
+================================================================
+执行结果：{{ status_text }}
+执行环境：{{ env | upper }}
+执行时间：{{ executed_at }}
+触发方式：{{ trigger_type }}
+----------------------------------------------------------------
+用例总数：{{ total }}
+通过：{{ passed }}
+失败：{{ failed }}
+异常：{{ broken }}
+跳过：{{ skipped }}
+通过率：{{ pass_rate }}%
+总耗时：{{ duration }}s
+{% if retried_success %}重试后成功：{{ retried_success }} 条（偶发抖动，建议关注）
+{% endif %}
+{% if failed_cases %}
+----------------------------------------------------------------
+失败用例（前 {{ failed_cases | length }} 条）：
+{% for case in failed_cases %}{{ loop.index }}. {{ case.name }}
+   错误：{{ case.message }}
+{% endfor %}{% endif %}
+{% if report_url %}
+----------------------------------------------------------------
+完整报告：{{ report_url }}
+{% endif %}
+{% if pipeline_id %}
+流水线：#{{ pipeline_id }}{% if author %}  提交人：{{ author }}{% endif %}
+{% endif %}
+================================================================
+本邮件由 UI 自动化测试框架自动发送，请勿直接回复。

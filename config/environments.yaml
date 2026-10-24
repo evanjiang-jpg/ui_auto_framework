@@ -1,0 +1,109 @@
+# ==============================================================
+# 多环境配置（唯一配置源）
+# 合并规则：default 层 + 当前环境层 + local.yaml 本地覆盖层
+#   - 同名 key 按「后者覆盖前者」生效
+#   - 切换环境：python run.py -e test   或  环境变量 ENV=test
+#   - 本地个人配置写 config/local.yaml（不入库），只在本人机器生效
+# 注意：密钥/密码类字段一律留空，由环境变量注入（见 .env.example）
+# ==============================================================
+
+# --------------------------------------------------------------
+# default：所有环境共享的基础配置
+# --------------------------------------------------------------
+default:
+  # ---------- 浏览器 ----------
+  browser: chrome
+  headless: true
+  implicit_wait: 10
+  page_load_timeout: 30
+  window_size: 1920,1080
+  # 演示开关：true 时使用内置桩驱动 StubDriver，无需真实浏览器
+  # 接入真实项目时置为 false（或接入自己 CI 的 chrome）
+  use_stub_browser: true
+
+  # ---------- 接口 ----------
+  api_timeout: 10
+  api_retry_times: 2
+  # 接口桩后端开关：true 走内存桩（无真实后端时的演示用），真实项目置 false
+  api_mock: true
+
+  # ---------- 稳定性 ----------
+  # 元素/数据等待轮询间隔（秒）与默认超时
+  poll_interval: 0.5
+  default_timeout: 10
+
+  # ---------- 日志 ----------
+  log_level: INFO
+
+  # ---------- 产物目录 ----------
+  screenshot_dir: screenshots
+  report_dir: allure-report
+  result_dir: allure-results
+
+  # ---------- 通用账号 ----------
+  common_user: ""
+  common_pwd: ""
+
+
+# --------------------------------------------------------------
+# dev：开发环境
+# --------------------------------------------------------------
+dev:
+  base_url: http://dev.example.com
+  api_base_url: http://dev-api.example.com
+  headless: false
+  common_user: "13800138001"
+  common_pwd: "123456"
+
+
+# --------------------------------------------------------------
+# test：测试环境（默认）
+# --------------------------------------------------------------
+test:
+  base_url: http://test.example.com
+  api_base_url: http://test-api.example.com
+  headless: true
+  common_user: "13800138000"
+  common_pwd: test123
+
+
+# --------------------------------------------------------------
+# staging：预发布环境
+# --------------------------------------------------------------
+staging:
+  base_url: https://staging.example.com
+  api_base_url: https://staging-api.example.com
+  headless: true
+  common_user: "13800138999"
+  # ${} 占位符由 EnvManager 从环境变量注入，取不到则为空串
+  common_pwd: "${STAGING_COMMON_PWD}"
+
+
+# --------------------------------------------------------------
+# prod：生产环境（只读校验用，禁止写操作）
+# --------------------------------------------------------------
+prod:
+  base_url: https://www.example.com
+  api_base_url: https://api.example.com
+  headless: true
+  common_user: "13800138888"
+  common_pwd: "${PROD_COMMON_PWD}"   # 生产密码只从环境变量注入，绝不写进配置文件
+  readonly: true
+
+
+# --------------------------------------------------------------
+# _meta：框架读取的元信息（不参与业务配置合并）
+# --------------------------------------------------------------
+_meta:
+  # 每个环境必须存在的 key，缺失则启动即报错（快速失败）
+  required_keys:
+    - base_url
+    - browser
+  # 允许通过 -e 指定的环境列表，防止手滑输错环境名
+  available_envs:
+    - dev
+    - test
+    - staging
+    - prod
+  # 默认环境（未指定 -e 且 ENV 未设置时使用）
+  default_env: test
