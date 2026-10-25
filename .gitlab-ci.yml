@@ -36,8 +36,6 @@ variables:
   ENV: "test"
   IMAGE_NAME: "$CI_PROJECT_PATH"
   REGISTRY: "$CI_REGISTRY"
-  DOCKER_HUB_MIRROR: "docker.1ms.run"
-  DIND_IMAGE: "docker:24-dind"
 
 # --------------------------------------------------------------
 # 公共模板（避免每个 job 重复写安装依赖）
@@ -102,14 +100,13 @@ cd-image:
   stage: image
   image: docker:24-cli
   services:
-    - name: $DIND_IMAGE
-      command: ["--tls=false", "--registry-mirror=https://$DOCKER_HUB_MIRROR"]
+    - name: docker:24-dind
+      command: ["--tls=false", "--registry-mirror=https://docker.1ms.run"]
   variables:
     DOCKER_HOST: tcp://docker:2375
     DOCKER_TLS_CERTDIR: ""
     DOCKER_DRIVER: overlay2
   before_script:
-    - echo "=== DinD 已配置 registry-mirror: $DOCKER_HUB_MIRROR ==="
     - echo "=== 检查 Docker 可用性 ==="
     - |
       if ! docker info >/dev/null 2>&1; then
