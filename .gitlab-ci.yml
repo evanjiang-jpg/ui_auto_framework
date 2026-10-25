@@ -99,7 +99,7 @@ ci-test:
 cd-image:
   stage: image
   image:
-    name: kaniko/executor:v1.24.0-debug
+    name: gcr.chenby.cn/kaniko-project/executor:v1.24.0-debug
     entrypoint: [""]
   variables:
     DOCKER_CONFIG: /kaniko/.docker
@@ -112,15 +112,11 @@ cd-image:
           "${CI_REGISTRY}": {
             "auth": "$(echo -n "${CI_REGISTRY_USER}:${CI_REGISTRY_PASSWORD}" | base64 -w0)"
           }
-        },
-        "credHelpers": {
-          "gcr.io": "gcr"
         }
       }
       EOF
-    - echo "registry auth config ready"
   script:
-    - echo "构建并推送镜像：$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+    - echo "=== 构建镜像 ==="
     - |
       /kaniko/executor \
         --dockerfile "${CI_PROJECT_DIR}/Dockerfile" \
@@ -129,11 +125,9 @@ cd-image:
         --destination "${CI_REGISTRY_IMAGE}:latest" \
         --registry-mirror docker.1ms.run \
         --registry-mirror dockerhub.timeweb.cloud \
-        --registry-mirror hub-mirror.c.163.com \
-        --single-snapshot \
-        --skip-default-registry-auth
+        --single-snapshot
   after_script:
-    - echo "镜像推送成功：$CI_REGISTRY_IMAGE:latest"
+    - echo "镜像推送成功：${CI_REGISTRY_IMAGE}:latest"
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
     - if: '$CI_COMMIT_BRANCH == "master"'
