@@ -91,45 +91,43 @@ ci-test:
 #     对应 workflow 的 image job
 #     对标京东 JDOS 制品库
 #
-# 注意：jihulab 共享 Runner 可能不支持 DinD（需要 privileged）
-#   方案 A：DinD（services: docker:dind）—— 支持 privileged 的 Runner
-#   方案 B：Docker Socket 绑定（/var/run/docker.sock）—— 企业自建 Runner 常用
-#   方案 C：降级跳过 —— 两者都不行时跳过，不阻塞流水线
+# 使用 kaniko 代替 DinD：
+#   - DinD 需要 privileged，jihulab 共享 Runner 不支持
+#   - kaniko 是纯 Go 实现的镜像构建器，不需要 Docker daemon
+#   - kaniko debug 镜像自带 shell，方便写 before_script
 # --------------------------------------------------------------
 cd-image:
   stage: image
-  image: docker:24-cli
-  services:
-    - name: docker:24-dind
-      command: ["--tls=false", "--registry-mirror=https://docker.1ms.run"]
+  image:
+    name: gcr.io/kaniko-project/executor:v1.24.0-debug
+    entrypoint: [""]
   variables:
-    DOCKER_HOST: tcp://docker:2375
-    DOCKER_TLS_CERTDIR: ""
-    DOCKER_DRIVER: overlay2
+    DOCKER_CONFIG: /kaniko/.docker
   before_script:
-    - echo "=== 检查 Docker 可用性 ==="
+    - mkdir -p /kaniko/.docker
     - |
-      if ! docker info >/dev/null 2>&1; then
-        echo "⚠️ 当前 Runner 不支持 DinD，尝试 Docker Socket 绑定..."
-        if [ -S /var/run/docker.sock ]; then
-          echo "✅ 检测到 /var/run/docker.sock，使用宿主 Docker"
-          export DOCKER_HOST=unix:///var/run/docker.sock
-        else
-          echo "❌ 既不支持 DinD 也没有 Docker Socket，跳过镜像构建"
-          exit 0
-        fi
-      fi
-    - docker version
-    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+      cat > /kaniko/.docker/config.json <<EOF
+      {
+        "auths": {
+          "${CI_REGISTRY}": {
+            "auth": "$(echo -n "${CI_REGISTRY_USER}:${CI_REGISTRY_PASSWORD}" | base64 -w0)"
+          }
+        }
+      }
+      EOF
+    - echo "registry auth config ready"
   script:
-    - echo "🔨 构建镜像：$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
-    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA .
-    - docker tag $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA $CI_REGISTRY_IMAGE:latest
-    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
-    - docker push $CI_REGISTRY_IMAGE:latest
+    - echo "构建并推送镜像：$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+    - |
+      /kaniko/executor \
+        --dockerfile "${CI_PROJECT_DIR}/Dockerfile" \
+        --context "${CI_PROJECT_DIR}" \
+        --destination "${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}" \
+        --destination "${CI_REGISTRY_IMAGE}:latest" \
+        --registry-mirror docker.1ms.run \
+        --single-snapshot
   after_script:
-    - echo "✅ 镜像推送成功：$CI_REGISTRY_IMAGE:latest"
-  allow_failure: true
+    - echo "镜像推送成功：$CI_REGISTRY_IMAGE:latest"
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
     - if: '$CI_COMMIT_BRANCH == "master"'
