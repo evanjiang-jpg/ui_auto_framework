@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""登录页对象"""
+"""登录页面对象"""
 import uuid
 
 from selenium.webdriver.common.by import By
