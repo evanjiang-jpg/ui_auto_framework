@@ -8,6 +8,20 @@
 #   DINGTALK_WEBHOOK / DINGTALK_SECRET / FEISHU_WEBHOOK / FEISHU_SECRET
 #   EMAIL_SMTP_HOST / EMAIL_USER / EMAIL_PASSWORD / EMAIL_RECEIVERS
 #   DEPLOY_HOST / DEPLOY_USER / DEPLOY_SSH_KEY / DEPLOY_PATH（可选）
+# 查看当前远程（应该是 GitHub）
+# git remote -v
+# # 输出：origin  https://github.com/evanjiang-jpg/ui_auto_framework.git (fetch/push)
+
+# # 方案 A：添加 GitLab 作为第二个远程（保留 GitHub）
+# git remote add gitlab https://gitlab.com/ 你的用户名/ui_auto_framework.git
+
+# # 方案 B：直接把 origin 改成 GitLab（替换 GitHub）
+# git remote set-url origin https://gitlab.com/ 你的用户名/ui_auto_framework.git
+
+# # 推送到 GitLab
+# git push -u gitlab main
+# # 或者如果你替换了 origin：
+# git push -u origin main
 # ==============================================================
 
 stages:

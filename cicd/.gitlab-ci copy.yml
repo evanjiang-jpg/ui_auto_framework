@@ -1,0 +1,123 @@
+# ==============================================================
+# GitLab CI — 适配 GitHub Actions workflow 逻辑
+# 对标文件：.github/workflows/ui-test.yml
+# 4 个 job：CI 测试 → CD 镜像 → CD 部署 → 通知
+# ==============================================================
+
+stages:
+  - ci          # ① 跑测试
+  - image       # ② Docker 镜像
+  - deploy      # ③ SSH 部署（需手动审批）
+  - notify      # ④ 通知（无论前面成败都跑）
+
+variables:
+  PYTHON_VERSION: "3.10"
+  DOCKER_HOST: tcp://docker:2376
+  DOCKER_DRIVER: overlay2
+  IMAGE_NAME: $CI_PROJECT_PATH
+  REGISTRY: $CI_REGISTRY
+
+default:
+  image: python:${PYTHON_VERSION}-slim
+  before_script:
+    - pip install --upgrade pip -q
+    - pip install -r requirements.txt -q
+
+# ================================================================
+# ① CI — 跑测试 / 生成 Allure 报告 / 上传 artifact
+#     对应 workflow 的 ui-test job
+# ================================================================
+ci-test:
+  stage: ci
+  script:
+    - python run.py -m smoke || true
+    - python run.py -m p0 || true
+    - allure generate allure-results -o allure-report --clean || true
+  artifacts:
+    paths:
+      - allure-results/
+      - allure-report/
+    expire_in: 1 week
+    when: always
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH == "master"'
+
+# ================================================================
+# ② CD — Docker 镜像推 GitLab Registry
+#     对应 workflow 的 image job
+# ================================================================
+cd-image:
+  stage: image
+  image: docker:latest
+  services:
+    - docker:dind
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA .
+    - docker tag $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA $CI_REGISTRY_IMAGE:latest
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+    - docker push $CI_REGISTRY_IMAGE:latest
+  after_script:
+    - echo "✅ 镜像推送成功：$CI_REGISTRY_IMAGE:latest"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH == "master"'
+    - if: '$CI_COMMIT_BRANCH == "develop"'
+
+# ================================================================
+# ③ CD — SSH 部署到测试环境（手动审批）
+#     对应 workflow 的 deploy-test job
+#     GitLab 需要先在 Settings → CI/CD → Variables 里配：
+#       DEPLOY_HOST / DEPLOY_USER / DEPLOY_SSH_KEY / DEPLOY_PATH
+# ================================================================
+cd-deploy-test:
+  stage: deploy
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache openssh-client
+    - mkdir -p ~/.ssh
+    - echo "$DEPLOY_SSH_KEY" | tr -d '\r' > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - ssh-keyscan -H $DEPLOY_HOST >> ~/.ssh/known_hosts
+  script:
+    - echo "$DEPLOY_HOST ${DEPLOY_USER:-root}@$DEPLOY_PATH"
+    - |
+      if [ -n "$DEPLOY_HOST" ]; then
+        ssh $DEPLOY_USER@$DEPLOY_HOST "cd $DEPLOY_PATH && git pull && docker-compose up -d"
+        echo "✅ SSH 部署完成"
+      else
+        echo "⚠️ 未配置 DEPLOY_HOST，跳过部署"
+      fi
+  environment:
+    name: test
+    url: http://$DEPLOY_HOST
+  when: manual
+  allow_failure: true
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH == "master"'
+
+# ================================================================
+# ④ 通知 — 无论前面成败都发
+#     对应 workflow 的 notify job（needs + always()）
+# ================================================================
+notify:
+  stage: notify
+  image: python:${PYTHON_VERSION}-slim
+  needs:
+    - job: ci-test
+      artifacts: true
+  script:
+    - python run.py --notify-only
+  variables:
+    ALLURE_REPORT_URL: "${CI_PAGES_URL}/allure-report"
+  when: always
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH == "master"'

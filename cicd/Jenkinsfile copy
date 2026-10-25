@@ -1,0 +1,186 @@
+// ==============================================================
+// Jenkins Pipeline — 适配 GitHub Actions workflow 逻辑
+// 对标文件：.github/workflows/ui-test.yml
+// 4 个 stage：CI 测试 → CD 镜像 → CD 部署 → 通知
+// ==============================================================
+
+pipeline {
+    agent any
+
+    environment {
+        REGISTRY       = 'registry.cn-hangzhou.aliyuncs.com'
+        IMAGE_NAME     = "${JOB_NAME}"
+        PYTHON_VERSION = '3.10'
+        DOCKERFILE_PATH = './Dockerfile'
+
+        // 通知（对应 workflow 的 Secrets）
+        FEISHU_WEBHOOK = credentials('FEISHU_WEBHOOK')
+        FEISHU_SECRET  = credentials('FEISHU_SECRET')
+        DINGTALK_WEBHOOK = credentials('DINGTALK_WEBHOOK')
+        SMTP_PASS      = credentials('SMTP_PASS')
+
+        // 部署（可选，不配则跳过）
+        DEPLOY_HOST   = credentials('DEPLOY_HOST')
+        DEPLOY_USER   = credentials('DEPLOY_USER')
+        DEPLOY_SSH_KEY = credentials('DEPLOY_SSH_KEY')
+        DEPLOY_PATH   = credentials('DEPLOY_PATH')
+    }
+
+    stages {
+        // ============================================================
+        // ① CI — 跑测试 / 生成 Allure 报告 / 上传产物
+        //     对应 workflow 的 ui-test job
+        // ============================================================
+        stage('① CI 测试') {
+            agent {
+                docker {
+                    image "python:${PYTHON_VERSION}-slim"
+                    args '-v /var/run/docker.sock:/var/run/docker.sock'
+                }
+            }
+            steps {
+                sh '''
+                    pip install --upgrade pip
+                    pip install -r requirements.txt
+                '''
+                sh 'python run.py -m smoke || true'
+                sh 'python run.py -m p0 || true'
+
+                // 生成 Allure 静态报告（需要 Jenkins 装 Allure Plugin）
+                script {
+                    dir('allure-report') {
+                        deleteDir()
+                    }
+                    sh 'allure generate allure-results -o allure-report --clean || true'
+                }
+
+                // 记录 Allure 报告
+                allure([
+                    includeProperties: false,
+                    jdk: '',
+                    results: [[path: 'allure-results']]
+                ])
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'allure-results/**', allowEmptyArchive: true
+                    archiveArtifacts artifacts: 'allure-report/**', allowEmptyArchive: true
+                }
+            }
+        }
+
+        // ============================================================
+        // ② CD — Docker 镜像推 GHCR / 私有仓库
+        //     对应 workflow 的 image job
+        // ============================================================
+        stage('② CD 镜像构建推送') {
+            when {
+                anyOf {
+                    branch 'main'
+                    branch 'master'
+                    expression { env.BRANCH_NAME == null }
+                }
+            }
+            steps {
+                script {
+                    def tag = env.BRANCH_NAME == null ? 'latest' : env.BRANCH_NAME
+                    def shortSha = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
+                    def fullImage = "${REGISTRY}/${IMAGE_NAME}"
+
+                    sh """
+                        docker build -f ${DOCKERFILE_PATH} \
+                            -t ${fullImage}:${tag} \
+                            -t ${fullImage}:${shortSha} \
+                            -t ${fullImage}:latest .
+                        docker push ${fullImage}:${tag}
+                        docker push ${fullImage}:${shortSha}
+                        docker push ${fullImage}:latest
+                    """
+                    echo "✅ 镜像推送成功：${fullImage}:latest"
+                }
+            }
+        }
+
+        // ============================================================
+        // ③ CD — SSH 部署到测试环境
+        //     对应 workflow 的 deploy-test job
+        //     手动审批：Jenkins 里点 Stage 旁边的 ✔ 放行
+        // ============================================================
+        stage('③ CD 部署测试环境') {
+            when {
+                anyOf {
+                    branch 'main'
+                    branch 'master'
+                }
+            }
+            input {
+                message "确认部署到测试环境？"
+                ok "确认部署"
+            }
+            steps {
+                script {
+                    if (env.DEPLOY_HOST) {
+                        def remote = [:]
+                        remote.name    = 'test-server'
+                        remote.host    = env.DEPLOY_HOST
+                        remote.user    = env.DEPLOY_USER ?: 'root'
+                        remote.identityFile = env.DEPLOY_SSH_KEY
+                        remote.allowUnknownHosts = true
+
+                        sshagent(credentials: [env.DEPLOY_SSH_KEY]) {
+                            sh """
+                                ssh -o StrictHostKeyChecking=no \
+                                    ${env.DEPLOY_USER}@${env.DEPLOY_HOST} \
+                                    "cd ${env.DEPLOY_PATH} && git pull && docker-compose up -d"
+                            """
+                        }
+                        echo "✅ SSH 部署完成"
+                    } else {
+                        echo "⚠️ 未配置 DEPLOY_HOST，跳过 SSH 部署"
+                    }
+                }
+            }
+        }
+    }
+
+    // ================================================================
+    // 通知 — 对应 workflow 的 notify job（job 级 if: always()）
+    // ================================================================
+    post {
+        always {
+            script {
+                def status = currentBuild.result ?: 'SUCCESS'
+                def color  = status == 'SUCCESS' ? 'green' : 'red'
+                def icon   = status == 'SUCCESS' ? '✅' : '❌'
+
+                // 飞书通知
+                if (env.FEISHU_WEBHOOK) {
+                    sh """
+                        python -c \"
+                            import sys; sys.path.insert(0, '.')
+                            from common.notifier.channels.feishu import FeishuChannel
+                            c = FeishuChannel('${env.FEISHU_WEBHOOK}', '${env.FEISHU_SECRET}')
+                            c.send_card(
+                                title='${icon} UI自动化测试执行报告',
+                                summary='Jenkins #${BUILD_NUMBER} ${status}',
+                                ci_url='${BUILD_URL}',
+                                report_url='${BUILD_URL}allure'
+                            )
+                        \" || true
+                    """
+                }
+
+                // 钉钉通知
+                if (env.DINGTALK_WEBHOOK) {
+                    dingtalk(
+                        robot: env.DINGTALK_WEBHOOK,
+                        type: 'TEXT',
+                        text: ["Jenkins #${BUILD_NUMBER} — ${status} — ${BUILD_URL}"]
+                    )
+                }
+
+                echo "通知发送完毕，状态：${status}"
+            }
+        }
+    }
+}
