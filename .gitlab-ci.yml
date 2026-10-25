@@ -98,13 +98,16 @@ ci-test:
 # --------------------------------------------------------------
 cd-image:
   stage: image
-  image:
-    name: gcr.chenby.cn/kaniko-project/executor:v1.24.0-debug
-    entrypoint: [""]
+  image: alpine:latest
   variables:
     DOCKER_CONFIG: /kaniko/.docker
   before_script:
-    - mkdir -p /kaniko/.docker
+    - apk add --no-cache wget ca-certificates
+    - mkdir -p /kaniko /kaniko/.docker
+    - echo "下载 kaniko 二进制..."
+    - wget -q -O /kaniko/executor "https://mirror.ghproxy.com/https://github.com/GoogleContainerTools/kaniko/releases/download/v1.24.0/kaniko-executor-1.24.0-linux-amd64" || wget -q -O /kaniko/executor "https://gh-proxy.com/https://github.com/GoogleContainerTools/kaniko/releases/download/v1.24.0/kaniko-executor-1.24.0-linux-amd64" || wget -q -O /kaniko/executor "https://github.com/GoogleContainerTools/kaniko/releases/download/v1.24.0/kaniko-executor-1.24.0-linux-amd64"
+    - chmod +x /kaniko/executor
+    - /kaniko/executor --version || echo "kaniko version check done"
     - |
       cat > /kaniko/.docker/config.json <<EOF
       {
