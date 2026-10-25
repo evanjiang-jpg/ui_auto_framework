@@ -98,37 +98,22 @@ ci-test:
 # --------------------------------------------------------------
 cd-image:
   stage: image
-  image: alpine:latest
+  image: docker:24-cli
   variables:
-    DOCKER_CONFIG: /kaniko/.docker
+    DOCKER_HOST: unix:///var/run/docker.sock
   before_script:
-    - apk add --no-cache wget ca-certificates
-    - mkdir -p /kaniko /kaniko/.docker
-    - echo "下载 kaniko 二进制..."
-    - wget -q -O /kaniko/executor "https://mirror.ghproxy.com/https://github.com/GoogleContainerTools/kaniko/releases/download/v1.24.0/kaniko-executor-1.24.0-linux-amd64" || wget -q -O /kaniko/executor "https://gh-proxy.com/https://github.com/GoogleContainerTools/kaniko/releases/download/v1.24.0/kaniko-executor-1.24.0-linux-amd64" || wget -q -O /kaniko/executor "https://github.com/GoogleContainerTools/kaniko/releases/download/v1.24.0/kaniko-executor-1.24.0-linux-amd64"
-    - chmod +x /kaniko/executor
-    - /kaniko/executor --version || echo "kaniko version check done"
-    - |
-      cat > /kaniko/.docker/config.json <<EOF
-      {
-        "auths": {
-          "${CI_REGISTRY}": {
-            "auth": "$(echo -n "${CI_REGISTRY_USER}:${CI_REGISTRY_PASSWORD}" | base64 -w0)"
-          }
-        }
-      }
-      EOF
+    - echo "=== 检查 Docker 连通 ==="
+    - docker version
+    - echo "=== 登录 GitLab Registry ==="
+    - echo "${CI_REGISTRY_PASSWORD}" | docker login -u "${CI_REGISTRY_USER}" --password-stdin "${CI_REGISTRY}"
   script:
     - echo "=== 构建镜像 ==="
-    - |
-      /kaniko/executor \
-        --dockerfile "${CI_PROJECT_DIR}/Dockerfile" \
-        --context "${CI_PROJECT_DIR}" \
-        --destination "${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}" \
-        --destination "${CI_REGISTRY_IMAGE}:latest" \
-        --registry-mirror docker.1ms.run \
-        --registry-mirror dockerhub.timeweb.cloud \
-        --single-snapshot
+    - docker build --pull -t "${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}" "${CI_PROJECT_DIR}"
+    - echo "=== 推送镜像 ==="
+    - docker push "${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}"
+    - docker tag "${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}" "${CI_REGISTRY_IMAGE}:latest"
+    - docker push "${CI_REGISTRY_IMAGE}:latest"
+    - echo "=== 完成 ==="
   after_script:
     - echo "镜像推送成功：${CI_REGISTRY_IMAGE}:latest"
   rules:
