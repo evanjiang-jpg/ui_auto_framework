@@ -99,7 +99,7 @@ ci-test:
 cd-image:
   stage: image
   image:
-    name: gcr.io/kaniko-project/executor:v1.24.0-debug
+    name: kaniko/executor:v1.24.0-debug
     entrypoint: [""]
   variables:
     DOCKER_CONFIG: /kaniko/.docker
@@ -112,6 +112,9 @@ cd-image:
           "${CI_REGISTRY}": {
             "auth": "$(echo -n "${CI_REGISTRY_USER}:${CI_REGISTRY_PASSWORD}" | base64 -w0)"
           }
+        },
+        "credHelpers": {
+          "gcr.io": "gcr"
         }
       }
       EOF
@@ -125,7 +128,10 @@ cd-image:
         --destination "${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}" \
         --destination "${CI_REGISTRY_IMAGE}:latest" \
         --registry-mirror docker.1ms.run \
-        --single-snapshot
+        --registry-mirror dockerhub.timeweb.cloud \
+        --registry-mirror hub-mirror.c.163.com \
+        --single-snapshot \
+        --skip-default-registry-auth
   after_script:
     - echo "镜像推送成功：$CI_REGISTRY_IMAGE:latest"
   rules:
