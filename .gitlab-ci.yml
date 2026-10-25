@@ -102,65 +102,13 @@ cd-image:
   variables:
     DOCKER_CONFIG: /kaniko/.docker
   before_script:
-    - mkdir -p /kaniko/.docker
-    - echo "=== 下载 kaniko executor 二进制 ==="
-    - |
-      python -c "
-import urllib.request, os, sys
-urls = [
-    'https://mirror.ghproxy.com/https://github.com/GoogleContainerTools/kaniko/releases/download/v1.24.0/kaniko-executor-1.24.0-linux-amd64',
-    'https://gh-proxy.com/https://github.com/GoogleContainerTools/kaniko/releases/download/v1.24.0/kaniko-executor-1.24.0-linux-amd64',
-    'https://github.com/GoogleContainerTools/kaniko/releases/download/v1.24.0/kaniko-executor-1.24.0-linux-amd64',
-]
-for u in urls:
-    try:
-        print(f'尝试下载: {u[:65]}...')
-        urllib.request.urlretrieve(u, '/kaniko/executor')
-        size = os.path.getsize('/kaniko/executor')
-        print(f'  完成! 文件大小: {size} bytes')
-        if size > 10_000_000:
-            break
-        else:
-            print('  文件太小(<=10MB)，重试...')
-            os.remove('/kaniko/executor')
-    except Exception as e:
-        print(f'  失败: {e}')
-        if os.path.exists('/kaniko/executor'):
-            os.remove('/kaniko/executor')
-else:
-    print('所有下载源都失败了')
-    sys.exit(1)
-os.chmod('/kaniko/executor', 0o755)
-print('kaniko executor 二进制就绪')
-"
+    - python scripts/download_kaniko.py
     - ls -lh /kaniko/executor
-    - echo "=== 写入 GitLab Registry 认证 ==="
-    - |
-      cat > /kaniko/.docker/config.json <<EOF
-      {
-        "auths": {
-          "${CI_REGISTRY}": {
-            "auth": "$(python -c "import os,base64; print(base64.b64encode((os.environ['CI_REGISTRY_USER']+':'+os.environ['CI_REGISTRY_PASSWORD']).encode()).decode())")"
-          }
-        }
-      }
-      EOF
-    - cat /kaniko/.docker/config.json | python -c "import sys,json; d=json.load(sys.stdin); print(f'Registry 认证就绪: {list(d[\"auths\"].keys())}')"
   script:
-    - echo "=== 验证 kaniko ==="
-    - /kaniko/executor --version 2>&1 || echo "(version check skipped)"
-    - echo "=== 构建并推送镜像 ==="
-    - |
-      /kaniko/executor \
-        --dockerfile "${CI_PROJECT_DIR}/Dockerfile" \
-        --context "${CI_PROJECT_DIR}" \
-        --destination "${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}" \
-        --destination "${CI_REGISTRY_IMAGE}:latest" \
-        --registry-mirror docker.1ms.run \
-        --registry-mirror dockerhub.timeweb.cloud \
-        --single-snapshot
+    - /kaniko/executor --version 2>&1 || true
+    - /kaniko/executor --dockerfile "${CI_PROJECT_DIR}/Dockerfile" --context "${CI_PROJECT_DIR}" --destination "${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}" --destination "${CI_REGISTRY_IMAGE}:latest" --registry-mirror docker.1ms.run --registry-mirror dockerhub.timeweb.cloud --single-snapshot
   after_script:
-    - echo "镜像推送成功：${CI_REGISTRY_IMAGE}:latest"
+    - echo "镜像推送成功: ${CI_REGISTRY_IMAGE}:latest"
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
     - if: '$CI_COMMIT_BRANCH == "master"'
