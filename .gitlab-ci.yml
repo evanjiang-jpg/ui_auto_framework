@@ -53,23 +53,22 @@ ci-test:
 
 cd-image:
   stage: image
-  image: python:3.10-slim
+  image: docker:24-cli
+  services:
+    - name: docker:24-dind
+      command: ["--tls=false", "--registry-mirror", "https://docker.1ms.run", "--registry-mirror", "https://dockerhub.timeweb.cloud"]
   variables:
-    DOCKER_CONFIG: /kaniko/.docker
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_DRIVER: overlay2
   before_script:
-    - python scripts/download_kaniko.py
-    - ls -lh /kaniko/executor
+    - docker version
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
   script:
-    - /kaniko/executor --version 2>&1 || true
-    - |
-      /kaniko/executor \
-        --dockerfile "${CI_PROJECT_DIR}/Dockerfile" \
-        --context "${CI_PROJECT_DIR}" \
-        --destination "${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}" \
-        --destination "${CI_REGISTRY_IMAGE}:latest" \
-        --registry-mirror docker.1ms.run \
-        --registry-mirror dockerhub.timeweb.cloud \
-        --single-snapshot
+    - docker build --pull -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" "$CI_PROJECT_DIR"
+    - docker tag "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" "$CI_REGISTRY_IMAGE:latest"
+    - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+    - docker push "$CI_REGISTRY_IMAGE:latest"
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
     - if: '$CI_COMMIT_BRANCH == "master"'
