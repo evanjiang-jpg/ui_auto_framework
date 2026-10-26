@@ -14,8 +14,14 @@ pytest 根配置 —— 只做「装配」，不承载任何业务逻辑
 import os
 import sys
 
-# 把工程根加入搜索路径，保证 pytest 以任意方式启动都能正确定位包
 ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# 强制把工作目录切到项目根：
+#   pytest.ini 的 addopts 里 --alluredir=allure-results 是相对路径，
+#   若用户在 testcases/ 等子目录下跑 pytest，会错误地把报告输出到子目录。
+#   这里在 conftest 模块加载最早期就 chdir，确保后续所有相对路径都以项目根为基准。
+os.chdir(ROOT_DIR)
+
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
