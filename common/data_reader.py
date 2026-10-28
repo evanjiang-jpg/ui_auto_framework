@@ -22,6 +22,11 @@ from common.global_context import context
 _VAR_PATTERN = re.compile(r"\$\{([^}]+)\}")
 _SUFFIXES = (".yaml", ".yml", ".json")
 
+# ---------- 框架与测试数据文件之间的协议常量 ----------
+# 测试数据 yaml/json 的结构约定：含 cases 列表 + 可选 global 公共参数段
+DATA_CASES_KEY = "cases"
+DATA_GLOBAL_KEY = "global"
+
 
 def _data_dir() -> str:
     d = os.path.join(config.project_root, "data")
@@ -98,9 +103,9 @@ def load_test_data(file_name: str, auto_combine: bool = False,
     # 兼容三种结构：纯列表 / {global, cases} / 需组合的字典
     if isinstance(raw, list):
         cases = raw
-    elif isinstance(raw, dict) and "cases" in raw:
-        global_params = raw.get("global", {}) or {}
-        cases = [{**global_params, **case} for case in raw["cases"]]
+    elif isinstance(raw, dict) and DATA_CASES_KEY in raw:
+        global_params = raw.get(DATA_GLOBAL_KEY, {}) or {}
+        cases = [{**global_params, **case} for case in raw[DATA_CASES_KEY]]
     elif isinstance(raw, dict) and auto_combine:
         cases = _generate_combinations(raw)
     else:

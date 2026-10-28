@@ -30,6 +30,10 @@ ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
+# 框架与环境变量之间的协议常量，run.py 和 env_manager.py 共用
+from common.env_manager import EnvManager
+ENV_VAR = EnvManager.ENV_VAR
+
 """
 构建一个功能完备的命令行参数解析器，定义 python run.py 接受的所有命令行参数。
 """
@@ -229,7 +233,7 @@ def main() -> None:
 
     if args.notify_only:
         if args.env:
-            os.environ["ENV"] = args.env
+            os.environ[ENV_VAR] = args.env
         from common.logger import logger
         results_dir = args.results_dir
         if not os.path.isdir(results_dir):
@@ -246,7 +250,7 @@ def main() -> None:
 
     # 先设置环境变量，保证后续导入的配置读到正确环境
     if args.env:
-        os.environ["ENV"] = args.env
+        os.environ[ENV_VAR] = args.env
 
     from common.logger import logger
     from common.env_manager import config

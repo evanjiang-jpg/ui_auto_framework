@@ -12,6 +12,7 @@
 import threading
 from typing import Any, Callable, Optional
 
+from common.api_client import TOKEN_CONTEXT_KEY
 from common.global_context import context
 
 
@@ -23,7 +24,7 @@ class AuthManager:
         login_func: Callable[[], Any],
         logout_func: Optional[Callable[[], None]] = None,
         validate_func: Optional[Callable[[Any], bool]] = None,
-        token_key: str = "login_token",
+        token_key: str = TOKEN_CONTEXT_KEY,
     ):
         self._login_func = login_func
         self._logout_func = logout_func

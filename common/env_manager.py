@@ -30,6 +30,21 @@ class EnvManager:
     _instance = None
     _lock = threading.RLock()
 
+    # ---------- 框架与配置文件之间的协议常量 ----------
+    #: 当前环境的环境变量名（run.py / env_manager.py 共用，改一处全局生效）
+    ENV_VAR = "ENV"
+    #: 主配置文件名（相对 config/ 目录）
+    MAIN_CONFIG_FILE = "environments.yaml"
+    #: 本地个人覆盖层文件名（相对 config/ 目录）
+    LOCAL_OVERLAY_FILE = "local.yaml"
+    #: yaml 元信息段的 key（所有分层 yaml 通用）
+    YAML_META_KEY = "_meta"
+    #: yaml 分层合并的基础层名（所有分层 yaml 通用）
+    YAML_DEFAULT_LAYER = "default"
+    #: local.yaml 里用来指定本机默认环境的字段名（框架约定，不参与业务配置合并）
+    #: 双下划线前缀是元字段标记，与业务配置区分开；完整用法见 config/local.yaml 模板注释。
+    LOCAL_ENV_KEY = "__env__"
+
     def __new__(cls, *args, **kwargs):
         with cls._lock:
             if cls._instance is None:
@@ -51,9 +66,9 @@ class EnvManager:
         self._load_dotenv()
 
         # 2) 读取主配置原始内容与元信息
-        self._config_path = os.path.join(self.config_dir, "environments.yaml")
+        self._config_path = os.path.join(self.config_dir, self.MAIN_CONFIG_FILE)
         raw = self._read_yaml(self._config_path)
-        self._meta: Dict[str, Any] = raw.pop("_meta", {}) or {}
+        self._meta: Dict[str, Any] = raw.pop(self.YAML_META_KEY, {}) or {}
         self._raw = raw
 
         self._available_envs: List[str] = self._meta.get("available_envs") or list(raw.keys())
@@ -63,8 +78,8 @@ class EnvManager:
         local_overlay = self._read_local_overlay()
         self._env = (
             env
-            or os.getenv("ENV")
-            or local_overlay.get("__env__")
+            or os.getenv(self.ENV_VAR)
+            or local_overlay.get(self.LOCAL_ENV_KEY)
             or default_env
         )
         if self._env not in self._available_envs:
@@ -90,17 +105,17 @@ class EnvManager:
             return yaml.safe_load(f) or {}
 
     def _read_local_overlay(self) -> Dict[str, Any]:
-        """本地个人覆盖层，不入库；可选字段 __env__ 用于指定本机默认环境"""
-        local_path = os.path.join(self.config_dir, "local.yaml")
+        """本地个人覆盖层，不入库；LOCAL_ENV_KEY (__env__) 用于指定本机默认环境"""
+        local_path = os.path.join(self.config_dir, self.LOCAL_OVERLAY_FILE)
         if os.path.exists(local_path):
             return self._read_yaml(local_path) or {}
         return {}
 
     def _merge(self, base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
-        """深合并：override 覆盖 base（嵌套 dict 递归合并）"""
+        """ 分层合并机制的核心引擎 深合并：override 覆盖 base（嵌套 dict 递归合并）"""
         result = copy.deepcopy(base)
         for key, value in (override or {}).items():
-            if key == "__env__":
+            if key == self.LOCAL_ENV_KEY:
                 continue
             if isinstance(value, dict) and isinstance(result.get(key), dict):
                 result[key] = self._merge(result[key], value)
@@ -122,7 +137,7 @@ class EnvManager:
 
     def reload(self) -> None:
         """按当前环境重新合并配置（切换环境后调用）"""
-        merged = self._merge(self._raw.get("default", {}), self._raw.get(self._env, {}))
+        merged = self._merge(self._raw.get(self.YAML_DEFAULT_LAYER, {}), self._raw.get(self._env, {}))
         merged = self._merge(merged, self._read_local_overlay())
         merged = self._resolve_placeholders(merged)
         merged["env"] = self._env
@@ -160,7 +175,7 @@ class EnvManager:
         if env not in self._available_envs:
             raise ValueError(f"未知环境 '{env}'，可选：{self._available_envs}")
         self._env = env
-        os.environ["ENV"] = env
+        os.environ[self.ENV_VAR] = env
         self.reload()
 
     # ------------------------------------------------------------------
@@ -182,8 +197,8 @@ class EnvManager:
         """
         path = filename if os.path.isabs(filename) else os.path.join(self.config_dir, filename)
         raw = self._read_yaml(path)
-        raw.pop("_meta", None)
-        merged = self._merge(raw.get("default", {}), raw.get(self._env, {}))
+        raw.pop(self.YAML_META_KEY, None)
+        merged = self._merge(raw.get(self.YAML_DEFAULT_LAYER, {}), raw.get(self._env, {}))
         merged = self._merge(merged, self._read_local_overlay())
         return self._resolve_placeholders(merged)
 

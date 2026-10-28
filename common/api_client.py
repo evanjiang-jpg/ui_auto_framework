@@ -25,6 +25,10 @@ from common.logger import get_logger
 
 logger = get_logger("api_client")
 
+# ---------- 框架与全局上下文之间的协议常量 ----------
+# 登录 token 存入 global_context 的 key（api_client / auth_manager / fixture 都用）
+TOKEN_CONTEXT_KEY = "login_token"
+
 
 class APIClient:
     """接口请求客户端（单例，内置 requests.Session 复用连接）"""
@@ -51,7 +55,7 @@ class APIClient:
         return config.get("api_timeout", 10)
 
     def _init_headers(self) -> None:
-        token = context.get("login_token")
+        token = context.get(TOKEN_CONTEXT_KEY)
         if token:
             self._session.headers.update({"Authorization": f"Bearer {token}"})
 
@@ -106,7 +110,7 @@ class APIClient:
     # ------------------------------------------------------------------
     def set_token(self, token: str) -> None:
         self._session.headers.update({"Authorization": f"Bearer {token}"})
-        context.set("login_token", token)
+        context.set(TOKEN_CONTEXT_KEY, token)
 
     def set_cookies(self, cookies: Dict[str, str]) -> None:
         for name, value in (cookies or {}).items():
